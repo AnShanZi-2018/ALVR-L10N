@@ -1,0 +1,10 @@
+# Rust
+/target
+*.pdb
+
+# Runtime files produced by the tool
+alvr-l10n.log
+tool.ini
+
+# Scratch
+/dist

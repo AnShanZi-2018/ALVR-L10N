@@ -1,0 +1,63 @@
+# Build the tool on every push and pull request.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "dist/ALVR-L10N"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/release/ALVR-L10N.exe" $stage
+          Copy-Item "languages" $stage -Recurse
+          Copy-Item "builds" $stage -Recurse
+          Copy-Item "README.md", "LICENSE" $stage
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/ALVR-L10N-win64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ALVR-L10N-win64
+          path: dist/ALVR-L10N-win64.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ALVR-L10N-win64
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ALVR-L10N-win64.zip
+          generate_release_notes: true

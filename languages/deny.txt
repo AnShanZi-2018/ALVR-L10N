@@ -1,0 +1,141 @@
+/tmp
+/user/hand/left/input/a/click
+/user/hand/left/input/trigger/touch
+1/4 resolution
+10-bit encoding
+127.0.0.1
+72Hz
+ALVR Controller
+ALVR bindings
+AMF
+AV1
+Automatic
+Average buffering
+Balanced
+Baseline
+Batch size
+Body Tracking
+By index
+By name (substring)
+CABAC
+CAVLC
+CBR
+Center region height
+Center region width
+Center shift X
+Center shift Y
+Clamp HDR extended range
+Client receive buffer size
+Client send buffer size
+Client-side post-processing
+Constant
+Default
+Disabled
+Duration
+Enable HDR
+Enable High-Motion Quality Boost
+Enable Pre-analysis
+Enable VBAQ/CAQ
+Enabled
+Encoder thread count
+Encoding Gamma
+Extreme
+Eye and face tracking
+FPS reset threshold multiplier
+Fake Vive Trackers
+Force HDR sRGB Correction
+Force software encoding
+Foveation offset
+Full range color
+H264
+HDR
+HEVC
+HSV Chroma Key
+Hand tracking interaction
+Headset microphone
+Headset speaker
+Hevc
+High
+Horizontal edge ratio
+Hue end max
+Hue end min
+Hue start max
+Hue start min
+Light
+Low
+Main
+Manual
+Maximum bitrate
+Maximum buffering
+Maximum decoder latency
+Maximum network latency
+Medium
+Medium (width: 4288)
+Minimum IDR interval
+Minimum bitrate
+Minimum duration
+Mute desktop audio when streaming
+NVENC
+None
+Object Tracking
+Off
+Open and close SteamVR with dashboard
+Override for 10-bit encoding
+Override for HDR
+Override for encoding gamma
+Override for full range color
+Pico 4
+Prediction
+Preferred FPS
+Quality
+Quality preset
+Quest 2
+Quest 2 Touch
+Quest 3 Touch Plus
+Quest Pro
+RGB Chroma Key
+Rift S
+Rift S Touch
+Selecting a quality too high may result in stuttering or still image!
+Software (CPU) encoding
+Speed
+Start video recording at client connection
+SteamVR Input 2.0
+Streamer receive buffer size
+Streamer send buffer size
+System Default
+TCP
+Type
+UDP
+Ultra
+Unknown
+VB Cable
+VBR
+VMC
+VRCFaceTracking
+VRChat Body OSC
+VRChat Eye OSC
+Valve Index
+Vertical edge ratio
+Virtual Audio Cable
+Vive Tracker
+Vive Wand
+VoiceMeeter
+VoiceMeeter Aux
+VoiceMeeter VAIO3
+alvr.client
+codec_preset
+encoder_preset
+foveation_preset
+h264
+h264: Profile
+help
+latency overstep
+low-latency
+notice
+operating-rate
+preferred_framerate
+priority
+resolution
+steamvr-restart
+vendor.qti-ext-dec-low-latency.enable
