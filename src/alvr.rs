@@ -261,16 +261,30 @@ fn candidates() -> Vec<PathBuf> {
     list
 }
 
+/// A real installation has at least one of these next to the dashboard.
+fn looks_complete(install: &AlvrInstall) -> bool {
+    let root = &install.root;
+    root.join("bin").is_dir()
+        || root.join("installations").is_dir()
+        || root.join("driver.vrdrivermanifest").is_file()
+}
+
 pub fn detect() -> Option<AlvrInstall> {
     let mut seen: Vec<PathBuf> = Vec::new();
+    let mut weak: Option<AlvrInstall> = None;
     for candidate in candidates() {
         if seen.contains(&candidate) {
             continue;
         }
         seen.push(candidate.clone());
         if let Some(found) = detect_in(&candidate) {
-            return Some(found);
+            if looks_complete(&found) {
+                return Some(found);
+            }
+            if weak.is_none() {
+                weak = Some(found);
+            }
         }
     }
-    None
+    weak
 }
