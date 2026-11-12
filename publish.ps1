@@ -41,13 +41,18 @@ catch {
 Write-Host "[2/4] pushing source"
 Push-Location $PSScriptRoot
 try {
-    git remote remove origin 2>$null
+    $ErrorActionPreference = "Continue"
+    git remote remove origin | Out-Null
+    $ErrorActionPreference = "Stop"
     git remote add origin "https://x-access-token:$Token@github.com/$Owner/$Repo.git"
-    git -c http.proxy=$Proxy -c https.proxy=$Proxy push -u origin main
+    git -c http.proxy=$Proxy -c https.proxy=$Proxy -c http.sslBackend=openssl push -u origin main
+    if ($LASTEXITCODE -ne 0) { throw "git push failed with exit code $LASTEXITCODE" }
 }
 finally {
-    git remote set-url origin "https://github.com/$Owner/$Repo.git"
+    $ErrorActionPreference = "Continue"
+    git remote set-url origin "https://github.com/$Owner/$Repo.git" | Out-Null
     Pop-Location
+    $ErrorActionPreference = "Stop"
 }
 
 Write-Host "[3/4] creating release $Tag"

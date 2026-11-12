@@ -168,9 +168,9 @@ fn ensure_session_intact(snapshot: &SessionSnapshot) -> Option<String> {
         return None;
     }
     match &snapshot.bytes {
-        Some(bytes) if std::fs::write(&snapshot.path, bytes).is_ok() => {
-            Some("ALVR rewrote session.json (usually a settings reset) — restored your file.".to_owned())
-        }
+        Some(bytes) if std::fs::write(&snapshot.path, bytes).is_ok() => Some(
+            "ALVR rewrote session.json (usually a settings reset) — restored your file.".to_owned(),
+        ),
         _ => Some("session.json changed; please check your ALVR settings.".to_owned()),
     }
 }
@@ -209,7 +209,10 @@ fn sync_chosen_packs(
 
     // Remove packs of ours that are no longer checked. This also cleans up
     // installations made by older versions of this tool (no manifest yet).
-    let ours: Vec<String> = packs.iter().map(|pack| format!("{}.ini", pack.id)).collect();
+    let ours: Vec<String> = packs
+        .iter()
+        .map(|pack| format!("{}.ini", pack.id))
+        .collect();
     let mut to_delete = previous;
     if let Ok(entries) = std::fs::read_dir(&target) {
         for entry in entries.flatten() {
@@ -271,7 +274,11 @@ fn install_build(install: &AlvrInstall, build_dir: &Path) -> Result<String, Stri
 /// `builds/v20.14.1` and `builds/20.14.1` are both accepted.
 fn build_dir_for(paths: &Paths, version: &str) -> Option<PathBuf> {
     let trimmed = version.trim_start_matches(['v', 'V']);
-    for candidate in [format!("v{trimmed}"), trimmed.to_owned(), version.to_owned()] {
+    for candidate in [
+        format!("v{trimmed}"),
+        trimmed.to_owned(),
+        version.to_owned(),
+    ] {
         let dir = paths.builds.join(&candidate);
         if dir.join("ALVR Dashboard.exe").is_file() {
             return Some(dir);
@@ -283,8 +290,15 @@ fn build_dir_for(paths: &Paths, version: &str) -> Option<PathBuf> {
         if !dir.is_dir() {
             continue;
         }
-        let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if name.trim_start_matches(['v', 'V']).eq_ignore_ascii_case(trimmed) {
+        let name = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if name
+            .trim_start_matches(['v', 'V'])
+            .eq_ignore_ascii_case(trimmed)
+        {
             return Some(dir);
         }
     }
@@ -308,7 +322,10 @@ fn apply(
         Ok(_) => return ("status_pick_pack", vec!["no pack selected".to_owned()]),
         Err(error) => return ("status_no_alvr", vec![error]),
     };
-    log.push(format!("packs -> ALVR\\languages: {}", installed.join(", ")));
+    log.push(format!(
+        "packs -> ALVR\\languages: {}",
+        installed.join(", ")
+    ));
 
     let default_pack = default_pack
         .map(str::to_owned)
@@ -543,13 +560,17 @@ fn run_cli(paths: &Paths) -> Option<()> {
                 strings: !flag("--no-strings"),
                 deny: load_deny(paths),
             };
-            apply(&install, &packs, &chosen, wanted.first().map(String::as_str), paths, &options)
+            apply(
+                &install,
+                &packs,
+                &chosen,
+                wanted.first().map(String::as_str),
+                paths,
+                &options,
+            )
         }
     };
-    out.push_str(&format!(
-        "STATUS: {}\n",
-        lang::UiLang::En.t(status)
-    ));
+    out.push_str(&format!("STATUS: {}\n", lang::UiLang::En.t(status)));
     for line in log {
         out.push_str(&format!("  {line}\n"));
     }
@@ -630,9 +651,7 @@ impl App {
                                 if path.extension().and_then(|e| e.to_str()) != Some("ini") {
                                     return None;
                                 }
-                                path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .map(str::to_owned)
+                                path.file_stem().and_then(|s| s.to_str()).map(str::to_owned)
                             })
                             .collect()
                     })
@@ -718,11 +737,7 @@ impl App {
                                 self.status_key = "import_ok";
                                 self.status_ok = true;
                                 self.status_extra.clear();
-                                let mut log = vec![format!(
-                                    "{} {}",
-                                    self.t("saved_to"),
-                                    path
-                                )];
+                                let mut log = vec![format!("{} {}", self.t("saved_to"), path)];
                                 if let Some(version) = version {
                                     log.push(format!("{} {}", self.t("import_version"), version));
                                 }
@@ -862,7 +877,9 @@ impl eframe::App for App {
 
             ui.add_space(10.0);
             ui.label(egui::RichText::new(self.t("packs")).strong());
-            ui.add(egui::Label::new(egui::RichText::new(self.t("packs_hint")).small().weak()).wrap());
+            ui.add(
+                egui::Label::new(egui::RichText::new(self.t("packs_hint")).small().weak()).wrap(),
+            );
             ui.add_space(4.0);
             if self.packs.is_empty() {
                 ui.label(self.t("no_packs"));
@@ -944,7 +961,10 @@ impl eframe::App for App {
             }
             ui.add(egui::Label::new(egui::RichText::new(status).size(15.0).color(color)).wrap());
             ui.add_space(2.0);
-            ui.add(egui::Label::new(egui::RichText::new(self.t("settings_note")).small().weak()).wrap());
+            ui.add(
+                egui::Label::new(egui::RichText::new(self.t("settings_note")).small().weak())
+                    .wrap(),
+            );
             ui.add_space(6.0);
             ui.separator();
         });
