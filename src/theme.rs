@@ -16,7 +16,11 @@ const WIDGET_HOVER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xda, 0xda, 0x
 
 /// Panel colour the current theme should produce (used to detect overrides).
 pub fn expected_panel(dark: bool) -> egui::Color32 {
-    if dark { BG_DARK } else { BG_LIGHT }
+    if dark {
+        BG_DARK
+    } else {
+        BG_LIGHT
+    }
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
@@ -34,7 +38,13 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     let (bg, panel, widget, hover, text) = if dark {
         (BG_DARK, PANEL_DARK, WIDGET_DARK, WIDGET_HOVER, TEXT_DARK)
     } else {
-        (BG_LIGHT, PANEL_LIGHT, WIDGET_LIGHT, WIDGET_HOVER_LIGHT, egui::Color32::from_rgb(0x1c, 0x1c, 0x1e))
+        (
+            BG_LIGHT,
+            PANEL_LIGHT,
+            WIDGET_LIGHT,
+            WIDGET_HOVER_LIGHT,
+            egui::Color32::from_rgb(0x1c, 0x1c, 0x1e),
+        )
     };
 
     visuals.panel_fill = bg;
