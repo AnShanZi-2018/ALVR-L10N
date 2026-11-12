@@ -158,16 +158,12 @@ pub fn patch_file(
                     font.len() / 1024,
                     blob.length / 1024
                 )),
-                None => report
-                    .notes
-                    .push("未在内嵌字库中找到 Ubuntu 字体槽位".into()),
+                None => report.notes.push("未在内嵌字库中找到 Ubuntu 字体槽位".into()),
             },
             Err(e) => report.notes.push(format!("读取字体失败：{e}")),
         }
     } else {
-        report
-            .notes
-            .push("该语言没有附带字体，中文可能显示为方块".into());
+        report.notes.push("该语言没有附带字体，中文可能显示为方块".into());
     }
 
     // 2. strings, longest first so shorter keys never eat into a longer match
@@ -242,8 +238,7 @@ pub fn restore_file(target: &Path) -> Result<bool, String> {
     let Some(original) = original_of(target) else {
         return Ok(false);
     };
-    std::fs::copy(&original, target)
-        .map_err(|e| format!("还原失败（ALVR 是否还在运行？）：{e}"))?;
+    std::fs::copy(&original, target).map_err(|e| format!("还原失败（ALVR 是否还在运行？）：{e}"))?;
     Ok(true)
 }
 

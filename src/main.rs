@@ -18,6 +18,7 @@ mod lang;
 mod pack;
 mod patch;
 mod sfnt;
+mod theme;
 
 use alvr::AlvrInstall;
 use eframe::egui;
@@ -53,28 +54,60 @@ fn load_deny(paths: &Paths) -> std::collections::HashSet<String> {
         .unwrap_or_default()
 }
 
-// --------------------------------------------------------------------- ui lang
+// --------------------------------------------------------------------- prefs
 
-fn load_ui_lang(path: &Path) -> UiLang {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| {
-            text.lines().find_map(|line| {
-                let (key, value) = line.trim().split_once('=')?;
-                key.trim()
-                    .eq_ignore_ascii_case("language")
-                    .then(|| UiLang::from_id(value.trim()))
-            })
-        })
-        .unwrap_or(UiLang::En)
+pub const WINDOW_TITLE: &str = "ALVR Localization Tool";
+pub const PROJECT_URL: &str = "https://github.com/AnShanZi-2018/ALVR-L10N";
+
+#[derive(Clone, Copy)]
+struct UiPrefs {
+    lang: UiLang,
+    dark: bool,
 }
 
-fn save_ui_lang(path: &Path, ui_lang: UiLang) {
+fn read_ini(path: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with(';') || line.starts_with('[') {
+                        return None;
+                    }
+                    let (key, value) = line.split_once('=')?;
+                    Some((key.trim().to_ascii_lowercase(), value.trim().to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn load_prefs(path: &Path) -> UiPrefs {
+    let entries = read_ini(path);
+    let lookup = |key: &str| {
+        entries
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    UiPrefs {
+        lang: lookup("language")
+            .map(|value| UiLang::from_id(&value))
+            .unwrap_or(UiLang::En),
+        dark: lookup("theme")
+            .map(|value| !value.eq_ignore_ascii_case("light"))
+            .unwrap_or(true),
+    }
+}
+
+fn save_prefs(path: &Path, prefs: UiPrefs) {
     let text = format!(
-        "; ALVR-L10N 工具界面语言 / tool interface language\r\n\
-         ; en / zh-CN / zh-TW / ja-JP / ko-KR\r\n\
-         \r\n[ui]\r\nlanguage = {}\r\n",
-        ui_lang.id()
+        "; ALVR-L10N 工具设置 / tool settings\r\n\
+         ; language: en / zh-CN / zh-TW / ja-JP / ko-KR\r\n\
+         ; theme: dark / light\r\n\
+         \r\n[ui]\r\nlanguage = {}\r\ntheme = {}\r\n",
+        prefs.lang.id(),
+        if prefs.dark { "dark" } else { "light" }
     );
     let _ = std::fs::write(path, text);
 }
@@ -168,9 +201,9 @@ fn ensure_session_intact(snapshot: &SessionSnapshot) -> Option<String> {
         return None;
     }
     match &snapshot.bytes {
-        Some(bytes) if std::fs::write(&snapshot.path, bytes).is_ok() => Some(
-            "ALVR rewrote session.json (usually a settings reset) — restored your file.".to_owned(),
-        ),
+        Some(bytes) if std::fs::write(&snapshot.path, bytes).is_ok() => {
+            Some("ALVR rewrote session.json (usually a settings reset) — restored your file.".to_owned())
+        }
         _ => Some("session.json changed; please check your ALVR settings.".to_owned()),
     }
 }
@@ -209,10 +242,7 @@ fn sync_chosen_packs(
 
     // Remove packs of ours that are no longer checked. This also cleans up
     // installations made by older versions of this tool (no manifest yet).
-    let ours: Vec<String> = packs
-        .iter()
-        .map(|pack| format!("{}.ini", pack.id))
-        .collect();
+    let ours: Vec<String> = packs.iter().map(|pack| format!("{}.ini", pack.id)).collect();
     let mut to_delete = previous;
     if let Ok(entries) = std::fs::read_dir(&target) {
         for entry in entries.flatten() {
@@ -274,11 +304,7 @@ fn install_build(install: &AlvrInstall, build_dir: &Path) -> Result<String, Stri
 /// `builds/v20.14.1` and `builds/20.14.1` are both accepted.
 fn build_dir_for(paths: &Paths, version: &str) -> Option<PathBuf> {
     let trimmed = version.trim_start_matches(['v', 'V']);
-    for candidate in [
-        format!("v{trimmed}"),
-        trimmed.to_owned(),
-        version.to_owned(),
-    ] {
+    for candidate in [format!("v{trimmed}"), trimmed.to_owned(), version.to_owned()] {
         let dir = paths.builds.join(&candidate);
         if dir.join("ALVR Dashboard.exe").is_file() {
             return Some(dir);
@@ -290,15 +316,8 @@ fn build_dir_for(paths: &Paths, version: &str) -> Option<PathBuf> {
         if !dir.is_dir() {
             continue;
         }
-        let name = dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if name
-            .trim_start_matches(['v', 'V'])
-            .eq_ignore_ascii_case(trimmed)
-        {
+        let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if name.trim_start_matches(['v', 'V']).eq_ignore_ascii_case(trimmed) {
             return Some(dir);
         }
     }
@@ -322,10 +341,7 @@ fn apply(
         Ok(_) => return ("status_pick_pack", vec!["no pack selected".to_owned()]),
         Err(error) => return ("status_no_alvr", vec![error]),
     };
-    log.push(format!(
-        "packs -> ALVR\\languages: {}",
-        installed.join(", ")
-    ));
+    log.push(format!("packs -> ALVR\\languages: {}", installed.join(", ")));
 
     let default_pack = default_pack
         .map(str::to_owned)
@@ -560,17 +576,13 @@ fn run_cli(paths: &Paths) -> Option<()> {
                 strings: !flag("--no-strings"),
                 deny: load_deny(paths),
             };
-            apply(
-                &install,
-                &packs,
-                &chosen,
-                wanted.first().map(String::as_str),
-                paths,
-                &options,
-            )
+            apply(&install, &packs, &chosen, wanted.first().map(String::as_str), paths, &options)
         }
     };
-    out.push_str(&format!("STATUS: {}\n", lang::UiLang::En.t(status)));
+    out.push_str(&format!(
+        "STATUS: {}\n",
+        lang::UiLang::En.t(status)
+    ));
     for line in log {
         out.push_str(&format!("  {line}\n"));
     }
@@ -579,6 +591,14 @@ fn run_cli(paths: &Paths) -> Option<()> {
 }
 
 // ------------------------------------------------------------------------ gui
+
+const NAV_WIDTH: f32 = 180.0;
+
+#[derive(PartialEq, Clone, Copy)]
+enum Page {
+    Localize,
+    About,
+}
 
 #[derive(PartialEq)]
 enum Action {
@@ -591,6 +611,9 @@ enum Action {
     ImportConfig,
     OpenAlvr,
     OpenPackFolder,
+    ToggleTheme,
+    Share,
+    OpenUrl(&'static str),
 }
 
 struct App {
@@ -598,10 +621,14 @@ struct App {
     packs: Vec<LanguagePack>,
     checked: Vec<bool>,
     ui_lang: UiLang,
+    page: Page,
+    dark: bool,
     log: Vec<String>,
     status_key: &'static str,
     status_ok: bool,
     status_extra: String,
+    toast: Option<(String, f64)>,
+    window_styled: bool,
     paths: Paths,
 }
 
@@ -614,18 +641,26 @@ impl App {
             builds: base.join("builds"),
             settings: base.join("tool.ini"),
         };
-        let ui_lang = load_ui_lang(&paths.settings);
+        let prefs = load_prefs(&paths.settings);
+        theme::apply(&cc.egui_ctx, prefs.dark);
         let install = alvr::detect();
         let packs = pack::load_dir(&paths.packs);
         let mut app = Self {
             install,
             packs,
             checked: Vec::new(),
-            ui_lang,
+            ui_lang: prefs.lang,
+            page: match std::env::var("ALVR_L10N_PAGE").as_deref() {
+                Ok("about") => Page::About,
+                _ => Page::Localize,
+            },
+            dark: prefs.dark,
             log: Vec::new(),
             status_key: "status_ready",
             status_ok: true,
             status_extra: String::new(),
+            toast: None,
+            window_styled: false,
             paths,
         };
         app.sync_checked_with_alvr();
@@ -700,9 +735,50 @@ impl App {
             .collect()
     }
 
+    fn toast(&mut self, text: impl Into<String>) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        self.toast = Some((text.into(), now + 2.5));
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, dark: bool) {
+        self.dark = dark;
+        theme::apply(ctx, dark);
+        theme::apply_window_decoration(WINDOW_TITLE, dark);
+        save_prefs(
+            &self.paths.settings,
+            UiPrefs {
+                lang: self.ui_lang,
+                dark,
+            },
+        );
+    }
+
     fn perform(&mut self, action: Action) {
         match action {
             Action::None => {}
+            Action::OpenUrl(url) => {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", "", url])
+                    .spawn();
+            }
+            Action::Share => {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "clip"])
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .and_then(|mut child| {
+                        use std::io::Write;
+                        if let Some(stdin) = child.stdin.as_mut() {
+                            stdin.write_all(PROJECT_URL.as_bytes())?;
+                        }
+                        child.wait()
+                    });
+                self.toast(self.t("share_copied"));
+            }
+            Action::ToggleTheme => {}
             Action::Redetect => {
                 self.install = alvr::detect();
                 self.packs = pack::load_dir(&self.paths.packs);
@@ -723,36 +799,6 @@ impl App {
                     self.status_ok = true;
                 } else {
                     self.log = vec![self.t("pack_add_failed").to_owned()];
-                }
-            }
-            Action::ImportConfig => {
-                if let Some(install) = self.install.clone() {
-                    if let Some(file) = rfd::FileDialog::new()
-                        .set_title(self.t("import_title"))
-                        .add_filter("ALVR session", &["json", "txt"])
-                        .pick_file()
-                    {
-                        match import_config(&install, &file) {
-                            Ok((path, version)) => {
-                                self.status_key = "import_ok";
-                                self.status_ok = true;
-                                self.status_extra.clear();
-                                let mut log = vec![format!("{} {}", self.t("saved_to"), path)];
-                                if let Some(version) = version {
-                                    log.push(format!("{} {}", self.t("import_version"), version));
-                                }
-                                self.log = log;
-                            }
-                            Err(error) => {
-                                self.status_key = "import_bad";
-                                self.status_ok = false;
-                                self.log = vec![error];
-                            }
-                        }
-                    }
-                } else {
-                    self.status_key = "status_no_alvr";
-                    self.status_ok = false;
                 }
             }
             Action::OpenPackFolder => {
@@ -788,6 +834,36 @@ impl App {
                     self.status_ok = false;
                 }
             }
+            Action::ImportConfig => {
+                if let Some(install) = self.install.clone() {
+                    if let Some(file) = rfd::FileDialog::new()
+                        .set_title(self.t("import_title"))
+                        .add_filter("ALVR session", &["json", "txt"])
+                        .pick_file()
+                    {
+                        match import_config(&install, &file) {
+                            Ok((path, version)) => {
+                                self.status_key = "import_ok";
+                                self.status_ok = true;
+                                self.status_extra.clear();
+                                let mut log = vec![format!("{} {}", self.t("saved_to"), path)];
+                                if let Some(version) = version {
+                                    log.push(format!("{} {}", self.t("import_version"), version));
+                                }
+                                self.log = log;
+                            }
+                            Err(error) => {
+                                self.status_key = "import_bad";
+                                self.status_ok = false;
+                                self.log = vec![error];
+                            }
+                        }
+                    }
+                } else {
+                    self.status_key = "status_no_alvr";
+                    self.status_ok = false;
+                }
+            }
             Action::Restore => {
                 if let Some(install) = self.install.clone() {
                     let (status, log) = restore(&install);
@@ -811,8 +887,7 @@ impl App {
                         deny: load_deny(&self.paths),
                         ..patch::PatchOptions::all()
                     };
-                    let (status, log) =
-                        apply(&install, &self.packs, &chosen, None, &self.paths, &options);
+                    let (status, log) = apply(&install, &self.packs, &chosen, None, &self.paths, &options);
                     self.status_key = status;
                     self.status_ok = status != "status_no_alvr";
                     self.log = log;
@@ -823,166 +898,398 @@ impl App {
             }
         }
     }
+
+    // ------------------------------------------------------------- page: home
+
+    fn home_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.t("page_localize"))
+                .size(20.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(2.0);
+        match &self.install {
+            Some(found) => {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}: {}   ({} {})",
+                        self.t("alvr_path"),
+                        found.root.display(),
+                        self.t("version"),
+                        found.version
+                    ))
+                    .weak(),
+                );
+            }
+            None => {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 90, 90),
+                    self.t("not_detected"),
+                );
+            }
+        }
+
+        ui.add_space(14.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.label(self.t("packs"));
+            ui.add(
+                egui::Label::new(egui::RichText::new(self.t("packs_hint")).small().weak()).wrap(),
+            );
+            ui.add_space(6.0);
+            if self.packs.is_empty() {
+                ui.label(self.t("no_packs"));
+            }
+            let mut toggled: Option<usize> = None;
+            for (index, pack) in self.packs.iter().enumerate() {
+                let selected = self.checked.get(index).copied().unwrap_or(false);
+                let label = format!("{}   ({})", pack.label(), pack.id);
+                if ui.selectable_label(selected, label).clicked() {
+                    toggled = Some(index);
+                }
+            }
+            if let Some(index) = toggled {
+                if self.checked.len() <= index {
+                    self.checked.resize(index + 1, false);
+                }
+                if let Some(slot) = self.checked.get_mut(index) {
+                    *slot = !*slot;
+                }
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button(self.t("add_pack")).clicked() {
+                    *action = Action::AddPack;
+                }
+                if ui.button(self.t("open_pack_folder")).clicked() {
+                    *action = Action::OpenPackFolder;
+                }
+            });
+            ui.add_space(4.0);
+        });
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add_sized(
+                    [132.0, 34.0],
+                    egui::Button::new(egui::RichText::new(self.t("apply")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::Apply;
+            }
+            if ui
+                .add_sized(
+                    [150.0, 34.0],
+                    egui::Button::new(egui::RichText::new(self.t("restore")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::Restore;
+            }
+            if ui
+                .add_sized(
+                    [160.0, 34.0],
+                    egui::Button::new(egui::RichText::new(self.t("backup")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::Backup;
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button(self.t("import_config")).clicked() {
+                *action = Action::ImportConfig;
+            }
+            if ui.button(self.t("open_alvr")).clicked() {
+                *action = Action::OpenAlvr;
+            }
+        });
+
+        ui.add_space(10.0);
+        let color = if self.status_ok {
+            egui::Color32::from_rgb(110, 200, 130)
+        } else {
+            egui::Color32::from_rgb(225, 95, 95)
+        };
+        let mut status = self.t(self.status_key).to_owned();
+        if !self.status_extra.is_empty() {
+            status.push_str(": ");
+            status.push_str(&self.status_extra);
+        }
+        ui.add(egui::Label::new(egui::RichText::new(status).size(15.0).color(color)).wrap());
+        ui.add(
+            egui::Label::new(egui::RichText::new(self.t("settings_note")).small().weak()).wrap(),
+        );
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new(self.t("log_title")).strong());
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height(ui.available_height() - 8.0)
+            .show(ui, |ui| {
+                for line in &self.log {
+                    ui.add(egui::Label::new(line).wrap());
+                }
+            });
+    }
+
+    // ------------------------------------------------------------ page: about
+
+    fn about_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.t("nav_about"))
+                .size(20.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!("{}  v{}", self.t("title"), env!("CARGO_PKG_VERSION")))
+                .size(26.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(2.0);
+        ui.label(egui::RichText::new(self.t("about_tagline")).weak());
+        ui.add_space(16.0);
+
+        link_row(ui, "🌐", self.t("about_github"), PROJECT_URL, action);
+        link_row(
+            ui,
+            "✉",
+            self.t("about_feedback"),
+            "mailto:anshanzi2018@gmail.com",
+            action,
+        );
+        let clicked = ui
+            .button(egui::RichText::new(format!("📋  {}", self.t("about_share"))))
+            .clicked();
+        if clicked {
+            *action = Action::Share;
+        }
+
+        ui.add_space(16.0);
+        ui.label(egui::RichText::new(self.t("about_license")).strong());
+        ui.add_space(4.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(include_str!("../LICENSE")).small())
+                        .wrap(),
+                );
+            });
+        });
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new(self.t("about_third_party")).small().weak());
+        let clicked = ui.button(self.t("about_changelog")).clicked();
+        if clicked {
+            *action = Action::OpenUrl(PROJECT_URL);
+        }
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.window_styled {
+            theme::apply_window_decoration(WINDOW_TITLE, self.dark);
+            self.window_styled = true;
+        }
+        {
+            let path = std::path::Path::new(r"G:\ALVR-L10N\ui-debug.txt");
+            let _ = std::fs::write(
+                path,
+                format!(
+                    "dark={} panel={:?} expected={:?} override={:?} pref={:?} page={}\n",
+                    self.dark,
+                    ctx.style().visuals.panel_fill,
+                    theme::expected_panel(self.dark),
+                    ctx.style().visuals.override_text_color,
+                    ctx.options(|o| o.theme_preference),
+                    if self.page == Page::About { "about" } else { "localize" }
+                ),
+            );
+        }
+
+        // eframe follows the system theme; keep our own choice pinned.
+        if ctx.style().visuals.panel_fill != theme::expected_panel(self.dark) {
+            theme::apply(ctx, self.dark);
+        }
+
         let mut action = Action::None;
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.heading(self.t("title"));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        egui::SidePanel::left("nav")
+            .exact_width(NAV_WIDTH)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(16.0);
+                ui.label(
+                    egui::RichText::new("ALVR")
+                        .size(26.0)
+                        .strong()
+                        .color(ui.visuals().text_color()),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}  v{}", self.t("nav_tool"), env!("CARGO_PKG_VERSION")))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(20.0);
+
+                if nav_row(ui, "🔌", self.t("nav_localize"), self.page == Page::Localize) {
+                    self.page = Page::Localize;
+                }
+                if nav_row(ui, "ℹ", self.t("nav_about"), self.page == Page::About) {
+                    self.page = Page::About;
+                }
+
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.add_space(12.0);
+                    if nav_row(
+                        ui,
+                        if self.dark { "☀" } else { "🌙" },
+                        if self.dark {
+                            self.t("theme_light")
+                        } else {
+                            self.t("theme_dark")
+                        },
+                        false,
+                    ) {
+                        action = Action::ToggleTheme;
+                    }
+                    ui.add_space(6.0);
+                    let mut chosen = self.ui_lang;
+                    egui::ComboBox::from_id_salt("ui_language")
+                        .width(160.0)
+                        .selected_text(self.ui_lang.label())
+                        .show_ui(ui, |ui| {
+                            for candidate in UI_LANGS {
+                                ui.selectable_value(&mut chosen, candidate, candidate.label());
+                            }
+                        });
+                    if chosen != self.ui_lang {
+                        self.ui_lang = chosen;
+                        save_prefs(
+                            &self.paths.settings,
+                            UiPrefs { lang: chosen, dark: self.dark },
+                        );
+                        self.summarize();
+                    }
+                    ui.add_space(4.0);
                     if ui.button(self.t("redetect")).clicked() {
                         action = Action::Redetect;
                     }
                 });
             });
 
-            ui.add_space(6.0);
-            match &self.install {
-                Some(found) => {
-                    ui.label(format!(
-                        "{}: {}   ({} {})",
-                        self.t("alvr_path"),
-                        found.root.display(),
-                        self.t("version"),
-                        found.version
-                    ));
-                }
-                None => {
-                    ui.colored_label(egui::Color32::from_rgb(220, 90, 90), self.t("not_detected"));
-                }
-            }
-
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(format!("{}:", self.t("ui_language")));
-                let mut chosen = self.ui_lang;
-                egui::ComboBox::from_id_salt("ui_language")
-                    .width(150.0)
-                    .selected_text(self.ui_lang.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in UI_LANGS {
-                            ui.selectable_value(&mut chosen, candidate, candidate.label());
-                        }
-                    });
-                if chosen != self.ui_lang {
-                    self.ui_lang = chosen;
-                    save_ui_lang(&self.paths.settings, chosen);
-                    self.summarize();
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.label(egui::RichText::new(self.t("packs")).strong());
-            ui.add(
-                egui::Label::new(egui::RichText::new(self.t("packs_hint")).small().weak()).wrap(),
-            );
-            ui.add_space(4.0);
-            if self.packs.is_empty() {
-                ui.label(self.t("no_packs"));
-            }
-            for (index, pack) in self.packs.iter().enumerate() {
-                let label = format!("{} ({})", pack.label(), pack.id);
-                let mut on = self.checked.get(index).copied().unwrap_or(false);
-                if ui.checkbox(&mut on, label).changed() {
-                    if self.checked.len() <= index {
-                        self.checked.resize(index + 1, false);
-                    }
-                    if let Some(slot) = self.checked.get_mut(index) {
-                        *slot = on;
-                    }
-                }
-            }
-
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button(self.t("add_pack")).clicked() {
-                    action = Action::AddPack;
-                }
-                if ui.button(self.t("open_pack_folder")).clicked() {
-                    action = Action::OpenPackFolder;
-                }
-            });
-
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_sized(
-                        [130.0, 34.0],
-                        egui::Button::new(egui::RichText::new(self.t("apply")).size(16.0)),
-                    )
-                    .clicked()
-                {
-                    action = Action::Apply;
-                }
-                if ui
-                    .add_sized(
-                        [150.0, 34.0],
-                        egui::Button::new(egui::RichText::new(self.t("restore")).size(16.0)),
-                    )
-                    .clicked()
-                {
-                    action = Action::Restore;
-                }
-                if ui
-                    .add_sized(
-                        [160.0, 34.0],
-                        egui::Button::new(egui::RichText::new(self.t("backup")).size(16.0)),
-                    )
-                    .clicked()
-                {
-                    action = Action::Backup;
-                }
-            });
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui.button(self.t("import_config")).clicked() {
-                    action = Action::ImportConfig;
-                }
-                if ui.button(self.t("open_alvr")).clicked() {
-                    action = Action::OpenAlvr;
-                }
-            });
-
-            ui.add_space(10.0);
-            let color = if self.status_ok {
-                egui::Color32::from_rgb(120, 200, 120)
-            } else {
-                egui::Color32::from_rgb(220, 90, 90)
-            };
-            let mut status = self.t(self.status_key).to_owned();
-            if !self.status_extra.is_empty() {
-                status.push_str(": ");
-                status.push_str(&self.status_extra);
-            }
-            ui.add(egui::Label::new(egui::RichText::new(status).size(15.0).color(color)).wrap());
-            ui.add_space(2.0);
-            ui.add(
-                egui::Label::new(egui::RichText::new(self.t("settings_note")).small().weak())
-                    .wrap(),
-            );
-            ui.add_space(6.0);
-            ui.separator();
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(self.t("log_title")).strong());
-            ui.add_space(4.0);
+        let panel_frame = egui::Frame::central_panel(&ctx.style())
+            .inner_margin(egui::Margin::same(16));
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for line in &self.log {
-                        ui.add(egui::Label::new(line).wrap());
-                    }
-                });
+                match self.page {
+                    Page::Localize => self.home_ui(ui, &mut action),
+                    Page::About => self.about_ui(ui, &mut action),
+                }
+            });
         });
 
-        self.perform(action);
+        if action == Action::ToggleTheme {
+            let dark = !self.dark;
+            self.set_theme(ctx, dark);
+        } else {
+            self.perform(action);
+        }
+
+        // toast
+        if let Some((text, until)) = self.toast.clone() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            if now < until {
+                egui::Area::new(egui::Id::new("toast"))
+                    .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -18.0))
+                    .show(ctx, |ui| {
+                        egui::Frame::window(ui.style()).show(ui, |ui| {
+                            ui.label(egui::RichText::new(text).strong());
+                        });
+                    });
+                ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            } else {
+                self.toast = None;
+            }
+        }
+    }
+}
+
+/// A sidebar navigation entry.
+fn nav_row(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool) -> bool {
+    let height = 36.0;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+    let visuals = ui.visuals();
+    let fill = if selected {
+        theme::ACCENT
+    } else if response.hovered() {
+        visuals.widgets.hovered.bg_fill
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(6), fill);
+    let color = if selected {
+        egui::Color32::WHITE
+    } else {
+        visuals.text_color()
+    };
+    ui.painter().text(
+        rect.left_center() + egui::vec2(12.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{icon}   {label}"),
+        egui::FontId::proportional(15.0),
+        color,
+    );
+    response.clicked()
+}
+
+/// A link-like row used on the About page.
+fn link_row(ui: &mut egui::Ui, icon: &str, label: &str, url: &'static str, action: &mut Action) {
+    let height = 30.0;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(6),
+            ui.visuals().widgets.hovered.bg_fill,
+        );
+    }
+    let color = if response.hovered() {
+        theme::ACCENT
+    } else {
+        ui.visuals().text_color()
+    };
+    ui.painter().text(
+        rect.left_center() + egui::vec2(4.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{icon}   {label}"),
+        egui::FontId::proportional(15.0),
+        color,
+    );
+    if response.clicked() {
+        *action = Action::OpenUrl(url);
     }
 }
 
@@ -1005,6 +1312,26 @@ fn install_ui_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// Windows scaling factor (1.0 at 96 DPI, 1.5 at 150%).
+#[cfg(windows)]
+fn system_scale() -> f32 {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetDpiForSystem() -> u32;
+    }
+    let dpi = unsafe { GetDpiForSystem() };
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f32 / 96.0
+    }
+}
+
+#[cfg(not(windows))]
+fn system_scale() -> f32 {
+    1.0
+}
+
 fn main() -> eframe::Result<()> {
     let base = exe_dir();
     let paths = Paths {
@@ -1018,13 +1345,13 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([780.0, 640.0])
+            .with_inner_size([800.0, 580.0])
             .with_min_inner_size([680.0, 520.0])
-            .with_title("ALVR Localization Tool"),
+            .with_title(WINDOW_TITLE),
         ..Default::default()
     };
     eframe::run_native(
-        "ALVR Localization Tool",
+        WINDOW_TITLE,
         options,
         Box::new(|cc| Ok(Box::new(App::new(cc)))),
     )

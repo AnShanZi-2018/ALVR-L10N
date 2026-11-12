@@ -127,3 +127,4 @@ fn try_parse(data: &[u8], base: usize, wanted: &str) -> Option<FontBlob> {
         family,
     })
 }
+

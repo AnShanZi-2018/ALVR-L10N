@@ -207,11 +207,8 @@ fn dashboard_in(root: &Path) -> Option<(PathBuf, String)> {
 
 pub fn detect_in(root: &Path) -> Option<AlvrInstall> {
     let (dashboard, version) = dashboard_in(root)?;
-    let launcher = find_named(root, is_launcher, "launcher").or_else(|| {
-        dashboard
-            .parent()
-            .and_then(|dir| find_named(dir, is_launcher, "launcher"))
-    });
+    let launcher = find_named(root, is_launcher, "launcher")
+        .or_else(|| dashboard.parent().and_then(|dir| find_named(dir, is_launcher, "launcher")));
     Some(AlvrInstall {
         root: root.to_path_buf(),
         version,
@@ -235,12 +232,7 @@ fn candidates() -> Vec<PathBuf> {
     }
 
     // 2. common install locations
-    for var in [
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "LOCALAPPDATA",
-        "APPDATA",
-    ] {
+    for var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "APPDATA"] {
         if let Ok(value) = std::env::var(var) {
             let base = PathBuf::from(value);
             list.push(base.join("ALVR"));

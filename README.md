@@ -7,8 +7,8 @@ A standalone localization tool for [ALVR](https://github.com/alvr-org/ALVR) — 
 
 ALVR itself ships with an English-only UI. This tool adds **Chinese (Simplified / Traditional), Japanese and Korean** to it, keeps a per-version build of the localized app, and can be removed at any time to get the official build back.
 
-![Tool in English](docs/tool-en.png)
-![Tool in Chinese](docs/tool-zh.png)
+![Tool in English](docs/tool-dark.png)
+![About page](docs/tool-about.png)
 ![ALVR localized](docs/alvr-zh.png)
 
 ## Features
@@ -41,6 +41,13 @@ u-RU | Русский | partial (falls back to English) |
 
 Untranslated entries show the English text, so a partial pack is always safe to
 select. Adding strings is a plain text edit — see [Language pack format](#language-pack-format).
+
+## Interface
+
+* Left navigation like ALVR itself, with **Localize** and **About** pages
+* ALVR-style rounded buttons, dark and light themes (toggle at the bottom left, remembered in 	ool.ini)
+* Native rounded window corners and dark title bar on Windows 11
+* About page: project link, feedback e-mail, "share this tool" (copies the repository link) and the full license
 
 ## Usage
 
