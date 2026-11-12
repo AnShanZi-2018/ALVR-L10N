@@ -8,3 +8,8 @@ tool.ini
 
 # Scratch
 /dist
+
+# Build artifacts used while preparing localized builds
+tools/*.crate
+tools/*.zip
+tools/cache/

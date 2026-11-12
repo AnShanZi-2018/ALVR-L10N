@@ -27,6 +27,21 @@ ALVR itself ships with an English-only UI. This tool adds **Chinese (Simplified 
 
 Grab the latest `ALVR-L10N-win64.zip` from the releases page and unpack it anywhere. The zip already contains the four language packs and the v20.14.1 localized build.
 
+## Language packs
+
+| Pack | Language | Coverage |
+| --- | --- | --- |
+| zh-CN | 简体中文 | complete |
+| zh-TW | 繁體中文 | complete |
+| ja-JP | 日本語 | complete |
+| ko-KR | 한국어 | complete |
+| 
+u-RU | Русский | partial (falls back to English) |
+| r-FR | Français | partial (falls back to English) |
+
+Untranslated entries show the English text, so a partial pack is always safe to
+select. Adding strings is a plain text edit — see [Language pack format](#language-pack-format).
+
 ## Usage
 
 1. Start ALVR once (so it creates `session.json`), then close it.
