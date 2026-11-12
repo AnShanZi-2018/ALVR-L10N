@@ -31,18 +31,21 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
+          $tag = if ("${{ github.ref_name }}" -like "v*") { "${{ github.ref_name }}" } else { "dev" }
           $stage = "dist/ALVR-L10N"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "target/release/ALVR-L10N.exe" $stage
           Copy-Item "languages" $stage -Recurse
           Copy-Item "builds" $stage -Recurse
-          Copy-Item "README.md", "LICENSE" $stage
-          Compress-Archive -Path "$stage/*" -DestinationPath "dist/ALVR-L10N-win64.zip"
+          Copy-Item "README.md", "LICENSE", "THIRD_PARTY_LICENSES.md" $stage
+          $zip = "dist/ALVR-L10N-$tag-win64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip
+          "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - uses: actions/upload-artifact@v4
         with:
           name: ALVR-L10N-win64
-          path: dist/ALVR-L10N-win64.zip
+          path: dist/*.zip
           if-no-files-found: error
 
   release:
@@ -59,5 +62,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/ALVR-L10N-win64.zip
+          files: dist/*.zip
           generate_release_notes: true
