@@ -1,5 +1,8 @@
 # ALVR-L10N
 
+![build](https://github.com/AnShanZi-2018/ALVR-L10N/actions/workflows/build.yml/badge.svg)
+
+
 A standalone localization tool for [ALVR](https://github.com/alvr-org/ALVR) — the PC VR streaming app.
 
 ALVR itself ships with an English-only UI. This tool adds **Chinese (Simplified / Traditional), Japanese and Korean** to it, keeps a per-version build of the localized app, and can be removed at any time to get the official build back.
