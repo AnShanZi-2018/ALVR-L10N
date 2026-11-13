@@ -2,6 +2,17 @@
 
 use crate::sysinfo::Hardware;
 
+/// Common headsets and their native per-eye resolution.
+pub const HEADSETS: &[(&str, u32, u32)] = &[
+    ("Quest 3 / 3S", 2064, 2208),
+    ("Quest 2 / Pro", 1832, 1920),
+    ("Pico 4", 2160, 2160),
+    ("Pico Neo 3", 1832, 1920),
+    ("Vive Focus 3", 2448, 2448),
+    ("Valve Index", 1440, 1600),
+    ("Reverb G2", 2160, 2160),
+];
+
 #[derive(Clone, Debug)]
 pub struct Recommendation {
     pub tier_key: &'static str,
@@ -60,7 +71,7 @@ fn score_gpu(name: &str, vram_mb: u64) -> u32 {
     20
 }
 
-pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
+pub fn recommend(hardware: &Hardware, wired: bool, native: Option<(u32, u32)>) -> Recommendation {
     let best = hardware
         .gpus
         .iter()
@@ -121,6 +132,24 @@ pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
         ("tier_low", "H264", 120, 90, (1832, 1920), 72)
     };
 
+    let (mut eye_w, mut eye_h) = (width.0, width.1);
+    if let Some((native_w, native_h)) = native {
+        let scale = if score >= 85 {
+            1.4f32
+        } else if score >= 60 {
+            1.15
+        } else {
+            1.0
+        };
+        let round8 = |value: f32| ((value as u32) + 7) / 8 * 8;
+        eye_w = round8(native_w as f32 * scale);
+        eye_h = round8(native_h as f32 * scale);
+        notes.push(format!(
+            "按头显原生 {}x{} 与显卡档位计算（x{scale:.2}）。",
+            native_w, native_h
+        ));
+    }
+
     if vram_gb > 0 && vram_gb < 6 {
         notes.push(format!(
             "显存仅 {} GB，建议把分辨率再降一档或关闭注视点编码。",
@@ -132,8 +161,8 @@ pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
         tier_key: tier,
         codec,
         bitrate_mbps: if wired { bitrate_wired } else { bitrate_wifi },
-        eye_width: width.0,
-        eye_height: width.1,
+        eye_width: eye_w,
+        eye_height: eye_h,
         refresh_hz: refresh,
         foveated: score >= 55,
         notes,

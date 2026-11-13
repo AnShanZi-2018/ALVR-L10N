@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "alvr-l10n"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "eframe",
  "rfd",

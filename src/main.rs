@@ -806,7 +806,7 @@ fn run_cli(paths: &Paths) -> Option<()> {
                 let headset = headset_from_session(&install);
                 let hardware = sysinfo::probe(Some(&install.root), headset);
                 let wired = !flag("--wireless");
-                let recommendation = recommend::recommend(&hardware, wired);
+                let recommendation = recommend::recommend(&hardware, wired, None);
                 match apply_recommendation(&install, &recommendation) {
                     Ok(backup) => format!(
                         "OK: {} / {} Mbps / {}x{} / {} Hz (backup: {})\n",
@@ -1019,6 +1019,7 @@ struct App {
     ai_test_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     hardware: Option<sysinfo::Hardware>,
     wired: bool,
+    headset_index: usize,
     paths: Paths,
 }
 
@@ -1077,6 +1078,7 @@ impl App {
             ai_test_rx: None,
             hardware: None,
             wired: true,
+            headset_index: 0,
             paths,
         };
         app.sync_checked_with_alvr();
@@ -1239,7 +1241,7 @@ impl App {
                     .unwrap_or_default();
                 let root = self.install.as_ref().map(|install| install.root.clone());
                 self.hardware = Some(sysinfo::probe(root.as_deref(), headset));
-                self.status_key = "status_ready";
+                self.status_key = "setup_ready";
                 self.status_ok = true;
             }
             Action::ApplySetup => {
@@ -1249,7 +1251,8 @@ impl App {
                     self.status_extra = "no hardware detected".to_owned();
                     return;
                 };
-                let recommendation = recommend::recommend(&hardware, self.wired);
+                let native = self.selected_native();
+                let recommendation = recommend::recommend(&hardware, self.wired, native);
                 if let Some(install) = self.install.clone() {
                     match apply_recommendation(&install, &recommendation) {
                         Ok(backup) => {
@@ -1733,9 +1736,21 @@ impl App {
             });
     }
 
+    fn selected_native(&self) -> Option<(u32, u32)> {
+        if self.headset_index == 0 {
+            return None;
+        }
+        recommend::HEADSETS
+            .get(self.headset_index - 1)
+            .map(|(_, w, h)| (*w, *h))
+    }
+
     // ------------------------------------------------------------ page: setup
 
     fn setup_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
+        if self.status_key == "status_ready" {
+            self.status_key = "setup_ready";
+        }
         if self.hardware.is_none() {
             let headset = self.install.as_ref().and_then(headset_from_session);
             let root = self.install.as_ref().map(|install| install.root.clone());
@@ -1749,170 +1764,198 @@ impl App {
                 .strong()
                 .color(ui.visuals().text_color()),
         );
-        ui.add_space(4.0);
-        ui.add(egui::Label::new(self.t("setup_intro")).wrap());
-        ui.add_space(12.0);
+        ui.add_space(2.0);
+        ui.add(egui::Label::new(egui::RichText::new(self.t("setup_intro")).small().weak()).wrap());
+        ui.add_space(10.0);
 
         let hardware = self.hardware.clone().unwrap_or_default();
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            egui::Grid::new("hardware")
-                .num_columns(2)
-                .spacing([16.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label(self.t("setup_cpu"));
-                    ui.label(&hardware.cpu);
-                    ui.end_row();
+        let native = self.selected_native();
+        let recommendation = recommend::recommend(&hardware, self.wired, native);
 
-                    ui.label(self.t("setup_ram"));
-                    ui.label(format!("{} GB", hardware.ram_gb));
-                    ui.end_row();
+        let real_gpus: Vec<sysinfo::Gpu> = hardware
+            .gpus
+            .iter()
+            .filter(|gpu| {
+                let lower = gpu.name.to_ascii_lowercase();
+                !lower.contains("virtual")
+                    && !lower.contains("basic display")
+                    && !lower.contains("remote")
+            })
+            .cloned()
+            .collect();
 
-                    ui.label(self.t("setup_gpu"));
-                    let real_gpus: Vec<&sysinfo::Gpu> = hardware
-                        .gpus
-                        .iter()
-                        .filter(|gpu| {
-                            let lower = gpu.name.to_ascii_lowercase();
-                            !lower.contains("virtual")
-                                && !lower.contains("basic display")
-                                && !lower.contains("remote")
-                        })
-                        .collect();
-                    if real_gpus.is_empty() {
-                        ui.label("—");
-                    } else {
-                        ui.vertical(|ui| {
-                            for gpu in real_gpus {
-                                let text = if gpu.vram_mb > 0 {
-                                    format!("{} ({} GB)", gpu.name, gpu.vram_mb / 1024)
-                                } else {
-                                    gpu.name.clone()
-                                };
-                                ui.label(text);
-                            }
+        ui.columns(2, |columns| {
+            // ---------------------------------------------------- left: hardware
+            let ui = &mut columns[0];
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                egui::Grid::new("hardware")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(self.t("setup_cpu"));
+                        ui.add(egui::Label::new(&hardware.cpu).wrap());
+                        ui.end_row();
+
+                        ui.label(self.t("setup_ram"));
+                        ui.label(format!("{} GB", hardware.ram_gb));
+                        ui.end_row();
+
+                        ui.label(self.t("setup_gpu"));
+                        if real_gpus.is_empty() {
+                            ui.label("—");
+                        } else {
+                            ui.vertical(|ui| {
+                                for gpu in &real_gpus {
+                                    let text = if gpu.vram_mb > 0 {
+                                        format!("{} ({} GB)", gpu.name, gpu.vram_mb / 1024)
+                                    } else {
+                                        gpu.name.clone()
+                                    };
+                                    ui.add(egui::Label::new(text).wrap());
+                                }
+                            });
+                        }
+                        ui.end_row();
+
+                        ui.label(self.t("setup_disk"));
+                        ui.label(format!("{} GB", hardware.disk_free_gb));
+                        ui.end_row();
+
+                        ui.label(self.t("setup_headset"));
+                        ui.label(hardware.headset.clone().unwrap_or_else(|| "—".to_owned()));
+                        ui.end_row();
+
+                        ui.label(self.t("setup_link"));
+                        let wired_label = self.t("setup_wired");
+                        let wireless_label = self.t("setup_wireless");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut self.wired, true, wired_label);
+                            ui.radio_value(&mut self.wired, false, wireless_label);
                         });
-                    }
-                    ui.end_row();
+                        ui.end_row();
 
-                    ui.label(self.t("setup_disk"));
-                    ui.label(format!("{} GB", hardware.disk_free_gb));
-                    ui.end_row();
-
-                    ui.label(self.t("setup_headset"));
-                    ui.label(hardware.headset.clone().unwrap_or_else(|| "—".to_owned()));
-                    ui.end_row();
-
-                    ui.label(self.t("setup_link"));
-                    let wired_label = self.t("setup_wired");
-                    let wireless_label = self.t("setup_wireless");
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut self.wired, true, wired_label);
-                        ui.radio_value(&mut self.wired, false, wireless_label);
+                        ui.label(self.t("setup_headset_pick"));
+                        let current = if self.headset_index == 0 {
+                            self.t("setup_headset_auto").to_owned()
+                        } else {
+                            recommend::HEADSETS
+                                .get(self.headset_index - 1)
+                                .map(|(name, _, _)| (*name).to_owned())
+                                .unwrap_or_else(|| "—".to_owned())
+                        };
+                        let mut choice = self.headset_index;
+                        egui::ComboBox::from_id_salt("headset_pick")
+                            .width(170.0)
+                            .selected_text(current)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut choice, 0, self.t("setup_headset_auto"));
+                                for (index, (name, native_w, native_h)) in
+                                    recommend::HEADSETS.iter().enumerate()
+                                {
+                                    ui.selectable_value(
+                                        &mut choice,
+                                        index + 1,
+                                        format!("{name}  {native_w}x{native_h}"),
+                                    );
+                                }
+                            });
+                        if choice != self.headset_index {
+                            self.headset_index = choice;
+                        }
+                        ui.end_row();
                     });
-                    ui.end_row();
-                });
-        });
+            });
 
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
+            ui.add_space(8.0);
             if ui.button(self.t("setup_redetect")).clicked() {
                 *action = Action::DetectHardware;
             }
-        });
 
-        let recommendation = recommend::recommend(&hardware, self.wired);
-        ui.add_space(12.0);
-        ui.label(
-            egui::RichText::new(self.t("setup_result"))
-                .strong()
-                .color(ui.visuals().text_color()),
-        );
-        ui.add_space(4.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            egui::Grid::new("recommendation")
-                .num_columns(2)
-                .spacing([16.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label(self.t("setup_tier"));
-                    ui.label(format!(
-                        "{} ({})",
-                        self.t(recommendation.tier_key),
-                        hardware
-                            .gpus
-                            .iter()
-                            .filter(|gpu| {
-                                let lower = gpu.name.to_ascii_lowercase();
-                                !lower.contains("virtual")
-                                    && !lower.contains("basic display")
-                                    && !lower.contains("remote")
-                            })
-                            .max_by_key(|gpu| gpu.vram_mb)
-                            .map(|gpu| gpu.name.clone())
-                            .unwrap_or_else(|| "—".to_owned())
-                    ));
-                    ui.end_row();
+            // --------------------------------------------- right: recommendation
+            let ui = &mut columns[1];
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                egui::Grid::new("recommendation")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(self.t("setup_tier"));
+                        ui.add(
+                            egui::Label::new(format!(
+                                "{} ({})",
+                                self.t(recommendation.tier_key),
+                                real_gpus
+                                    .iter()
+                                    .max_by_key(|gpu| gpu.vram_mb)
+                                    .map(|gpu| gpu.name.clone())
+                                    .unwrap_or_else(|| "—".to_owned())
+                            ))
+                            .wrap(),
+                        );
+                        ui.end_row();
 
-                    ui.label(self.t("setup_codec"));
-                    ui.label(recommendation.codec);
-                    ui.end_row();
+                        ui.label(self.t("setup_codec"));
+                        ui.label(recommendation.codec);
+                        ui.end_row();
 
-                    ui.label(self.t("setup_bitrate"));
-                    ui.label(format!("{} Mbps", recommendation.bitrate_mbps));
-                    ui.end_row();
+                        ui.label(self.t("setup_bitrate"));
+                        ui.label(format!("{} Mbps", recommendation.bitrate_mbps));
+                        ui.end_row();
 
-                    ui.label(self.t("setup_resolution"));
-                    ui.label(format!(
-                        "{} x {}",
-                        recommendation.eye_width, recommendation.eye_height
-                    ));
-                    ui.end_row();
+                        ui.label(self.t("setup_resolution"));
+                        ui.label(format!(
+                            "{} x {}",
+                            recommendation.eye_width, recommendation.eye_height
+                        ));
+                        ui.end_row();
 
-                    ui.label(self.t("setup_refresh"));
-                    ui.label(format!("{} Hz", recommendation.refresh_hz));
-                    ui.end_row();
-                });
-            ui.add_space(2.0);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(self.t("setup_bitrate_note"))
-                        .small()
-                        .weak(),
+                        ui.label(self.t("setup_refresh"));
+                        ui.label(format!("{} Hz", recommendation.refresh_hz));
+                        ui.end_row();
+                    });
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(self.t("setup_bitrate_note"))
+                            .small()
+                            .weak(),
+                    )
+                    .wrap(),
+                );
+            });
+
+            ui.add_space(10.0);
+            if ui
+                .add_sized(
+                    [200.0, 32.0],
+                    egui::Button::new(egui::RichText::new(self.t("setup_apply")).size(15.0)),
                 )
-                .wrap(),
-            );
+                .clicked()
+            {
+                *action = Action::ApplySetup;
+            }
+
+            ui.add_space(6.0);
+            let color = if self.status_ok {
+                egui::Color32::from_rgb(110, 200, 130)
+            } else {
+                egui::Color32::from_rgb(225, 95, 95)
+            };
+            let mut status = self.t(self.status_key).to_owned();
+            if !self.status_extra.is_empty() {
+                status.push_str(": ");
+                status.push_str(&self.status_extra);
+            }
+            ui.add(egui::Label::new(egui::RichText::new(status).color(color)).wrap());
+
+            ui.add_space(6.0);
+            for note in &recommendation.notes {
+                ui.add(egui::Label::new(
+                    egui::RichText::new(note)
+                        .small()
+                        .color(egui::Color32::from_rgb(210, 160, 80)),
+                ));
+            }
         });
-
-        ui.add_space(10.0);
-        if ui
-            .add_sized(
-                [200.0, 34.0],
-                egui::Button::new(egui::RichText::new(self.t("setup_apply")).size(15.0)),
-            )
-            .clicked()
-        {
-            *action = Action::ApplySetup;
-        }
-
-        ui.add_space(8.0);
-        let color = if self.status_ok {
-            egui::Color32::from_rgb(110, 200, 130)
-        } else {
-            egui::Color32::from_rgb(225, 95, 95)
-        };
-        let mut status = self.t(self.status_key).to_owned();
-        if !self.status_extra.is_empty() {
-            status.push_str(": ");
-            status.push_str(&self.status_extra);
-        }
-        ui.add(egui::Label::new(egui::RichText::new(status).color(color)).wrap());
-
-        ui.add_space(6.0);
-        for note in &recommendation.notes {
-            ui.add_space(4.0);
-            ui.add(egui::Label::new(
-                egui::RichText::new(note).color(egui::Color32::from_rgb(220, 170, 90)),
-            ));
-        }
     }
 
     // -------------------------------------------------------- page: translate
@@ -2111,9 +2154,7 @@ impl App {
                 .strong()
                 .color(ui.visuals().text_color()),
         );
-        ui.add_space(8.0);
-        ui.add(egui::Label::new(self.t("help_intro")).wrap());
-        ui.add_space(12.0);
+        ui.add_space(10.0);
 
         for (title, body) in [
             ("help_quick_title", "help_quick_body"),
