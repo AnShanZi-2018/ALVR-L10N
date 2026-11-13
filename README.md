@@ -192,6 +192,15 @@ Requirements: Rust stable and the MSVC toolchain on Windows. The UI fonts in `as
 
 Localized builds live in `builds/<version>/`; the scripts used to produce them from an ALVR release are in `tools/`.
 
+## Spreading the word
+
+* Upstream discussion (Show and tell): https://github.com/alvr-org/ALVR/discussions/3460
+* Why a tool like this exists: ALVR's dashboard has no i18n yet — see
+  [alvr-org/ALVR#1927](https://github.com/alvr-org/ALVR/issues/1927) and the older
+  [alvr-org/ALVR#281](https://github.com/alvr-org/ALVR/issues/281).
+* If it helps you: star the repository, share the release link, or send a language pack.
+  Corrections from native speakers are the most valuable contribution.
+
 ## Credits
 
 * [ALVR](https://github.com/alvr-org/ALVR) — MIT.
