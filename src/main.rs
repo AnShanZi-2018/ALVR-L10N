@@ -1297,7 +1297,7 @@ impl App {
             Action::AiStop => {
                 self.ai_cancel
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                self.ai_status = "stopping…".to_owned();
+                self.ai_status = self.t("ai_stopping").to_owned();
             }
             Action::AiStart => {
                 if self.ai_pack_id.trim().is_empty()
@@ -1305,7 +1305,7 @@ impl App {
                     || self.ai_base.trim().is_empty()
                     || self.ai_model.trim().is_empty()
                 {
-                    self.ai_status = "pack id / language / URL / model required".to_owned();
+                    self.ai_status = self.t("ai_need_fields").to_owned();
                 } else {
                     let reference = self.paths.packs.join("zh-CN.ini");
                     let keys = pack::english_keys(&reference);
@@ -1323,7 +1323,7 @@ impl App {
                         .collect();
 
                     if missing.is_empty() {
-                        self.ai_status = "nothing left to translate".to_owned();
+                        self.ai_status = self.t("ai_nothing_left").to_owned();
                     } else {
                         let (tx, rx) = std::sync::mpsc::channel();
                         self.ai_cancel =
@@ -1332,7 +1332,7 @@ impl App {
                         self.ai_total = missing.len();
                         self.ai_done = 0;
                         self.ai_translated = 0;
-                        self.ai_status = format!("translating {} strings…", missing.len());
+                        self.ai_status = format!("{} {}", self.t("ai_translating"), missing.len());
 
                         let config = ai::AiConfig {
                             base_url: self.ai_base.clone(),
@@ -1836,7 +1836,7 @@ impl App {
                     ui.label(self.t("setup_tier"));
                     ui.label(format!(
                         "{} ({})",
-                        recommendation.tier,
+                        self.t(recommendation.tier_key),
                         hardware
                             .gpus
                             .iter()
@@ -2098,14 +2098,7 @@ impl App {
             ui.add(egui::Label::new(self.ai_status.clone()).wrap());
         }
         ui.add_space(6.0);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new("The key is only sent to the endpoint above.")
-                    .small()
-                    .weak(),
-            )
-            .wrap(),
-        );
+        ui.add(egui::Label::new(egui::RichText::new(self.t("ai_key_note")).small().weak()).wrap());
     }
 
     // ------------------------------------------------------------- page: help
@@ -2123,12 +2116,12 @@ impl App {
         ui.add_space(12.0);
 
         for (title, body) in [
-            ("help_lang_title", "help_lang_body"),
-            ("help_custom_title", "help_custom_body"),
-            ("help_pack_title", "help_pack_body"),
-            ("help_font_title", "help_font_body"),
-            ("help_where_title", "help_where_body"),
-            ("help_safety_title", "help_safety_body"),
+            ("help_quick_title", "help_quick_body"),
+            ("help_localize_title", "help_localize_body"),
+            ("help_setup_title", "help_setup_body"),
+            ("help_translate_title", "help_translate_body"),
+            ("help_faq_title", "help_faq_body"),
+            ("help_files_title", "help_files_body"),
         ] {
             ui.label(
                 egui::RichText::new(self.t(title))
@@ -2368,7 +2361,7 @@ impl eframe::App for App {
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
                         self.ai_test_rx = Some(rx);
                     }
-                    Err(_) => outcome = Some(Err("test thread died".to_owned())),
+                    Err(_) => outcome = Some(Err(self.t("ai_test_died").to_owned())),
                 }
             }
             if let Some(result) = outcome {
@@ -2424,7 +2417,7 @@ impl eframe::App for App {
                     self.packs = pack::load_dir(&self.paths.packs);
                     self.sync_checked_with_alvr();
                 } else {
-                    self.ai_status = "could not write the pack".to_owned();
+                    self.ai_status = self.t("ai_write_failed").to_owned();
                 }
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(300));

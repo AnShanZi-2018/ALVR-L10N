@@ -1,6 +1,6 @@
 [package]
 name = "alvr-l10n"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2021"
 description = "Standalone language tool for ALVR (language packs + version-matched builds + in-place patch fallback)"
 license = "MIT"

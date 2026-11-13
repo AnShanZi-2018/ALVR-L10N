@@ -4,7 +4,7 @@ use crate::sysinfo::Hardware;
 
 #[derive(Clone, Debug)]
 pub struct Recommendation {
-    pub tier: &'static str,
+    pub tier_key: &'static str,
     pub codec: &'static str,
     pub bitrate_mbps: u32,
     pub eye_width: u32,
@@ -106,7 +106,7 @@ pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
 
     let (tier, codec, bitrate_wired, bitrate_wifi, width, refresh) = if score >= 85 {
         (
-            "高",
+            "tier_high",
             "Hevc",
             450,
             300,
@@ -114,11 +114,11 @@ pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
             if wired { 120 } else { 90 },
         )
     } else if score >= 60 {
-        ("中", "Hevc", 300, 200, (2448, 2560), 90)
+        ("tier_mid", "Hevc", 300, 200, (2448, 2560), 90)
     } else if score >= 35 {
-        ("入门", "H264", 180, 120, (2064, 2208), 72)
+        ("tier_entry", "H264", 180, 120, (2064, 2208), 72)
     } else {
-        ("很低", "H264", 120, 90, (1832, 1920), 72)
+        ("tier_low", "H264", 120, 90, (1832, 1920), 72)
     };
 
     if vram_gb > 0 && vram_gb < 6 {
@@ -129,7 +129,7 @@ pub fn recommend(hardware: &Hardware, wired: bool) -> Recommendation {
     }
 
     Recommendation {
-        tier,
+        tier_key: tier,
         codec,
         bitrate_mbps: if wired { bitrate_wired } else { bitrate_wifi },
         eye_width: width.0,
