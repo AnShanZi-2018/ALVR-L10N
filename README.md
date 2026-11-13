@@ -108,6 +108,22 @@ The tool has a **Help** page that explains: where the language packs come from, 
 (or drop a .ini into the pack folder), which font files are needed for CJK/Thai/Arabic,
 what gets copied into ALVR and where the backups live.
 
+## Adding languages without touching files
+
+* **Get more language packs** — the tool lists the packs shipped in this repository and downloads the ones you do not have yet (.ini + optional .ttf). One click, no file handling.
+* **Import CSV / JSON** — translators can work in Excel (English,Translation) or ship {English: translation}; the tool converts it into a pack automatically.
+* **Export translation template** — writes all 651 English strings as a two-column CSV, ready to translate and import back.
+
+Scripts for automation:
+
+`
+ALVR-L10N.exe --fetch-packs
+ALVR-L10N.exe --export-template template.csv
+ALVR-L10N.exe --import hi-IN.csv
+`
+
+A language that uses a script ALVR's font cannot draw (Hindi, Thai, Arabic, Hebrew…) also needs a <id>.ttf next to its .ini; the tool detects this and warns you.
+
 ## Language pack format
 
 `languages/<id>.ini`:

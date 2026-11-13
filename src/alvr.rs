@@ -220,6 +220,24 @@ pub fn detect_in(root: &Path) -> Option<AlvrInstall> {
     })
 }
 
+/// Point the tool at a specific `ALVR Dashboard.exe` the user picked.
+pub fn detect_exe(dashboard: &Path) -> Option<AlvrInstall> {
+    if !dashboard.is_file() || !is_dashboard(dashboard.file_name()?) {
+        return None;
+    }
+    let root = dashboard.parent()?.to_path_buf();
+    let version = file_version(dashboard)
+        .or_else(|| version_from_dir(&root))
+        .unwrap_or_else(|| "unknown".to_owned());
+    let launcher = find_named(&root, is_launcher, "launcher");
+    Some(AlvrInstall {
+        root,
+        version,
+        dashboard: dashboard.to_path_buf(),
+        launcher,
+    })
+}
+
 fn candidates() -> Vec<PathBuf> {
     let mut list = Vec::new();
 

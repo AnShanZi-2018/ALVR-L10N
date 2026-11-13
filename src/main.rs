@@ -58,11 +58,14 @@ fn load_deny(paths: &Paths) -> std::collections::HashSet<String> {
 
 pub const WINDOW_TITLE: &str = "ALVR Localization Tool";
 pub const PROJECT_URL: &str = "https://github.com/AnShanZi-2018/ALVR-L10N";
+pub const PACKS_INDEX: &str =
+    "https://api.github.com/repos/AnShanZi-2018/ALVR-L10N/contents/languages";
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct UiPrefs {
     lang: UiLang,
     dark: bool,
+    alvr_exe: Option<String>,
 }
 
 fn read_ini(path: &Path) -> Vec<(String, String)> {
@@ -97,6 +100,7 @@ fn load_prefs(path: &Path) -> UiPrefs {
         dark: lookup("theme")
             .map(|value| !value.eq_ignore_ascii_case("light"))
             .unwrap_or(true),
+        alvr_exe: lookup("alvr_exe").filter(|value| !value.is_empty()),
     }
 }
 
@@ -105,9 +109,10 @@ fn save_prefs(path: &Path, prefs: UiPrefs) {
         "; ALVR-L10N 工具设置 / tool settings\r\n\
          ; language: en / zh-CN / zh-TW / ja-JP / ko-KR\r\n\
          ; theme: dark / light\r\n\
-         \r\n[ui]\r\nlanguage = {}\r\ntheme = {}\r\n",
+         \r\n[ui]\r\nlanguage = {}\r\ntheme = {}\r\nalvr_exe = {}\r\n",
         prefs.lang.id(),
-        if prefs.dark { "dark" } else { "light" }
+        if prefs.dark { "dark" } else { "light" },
+        prefs.alvr_exe.clone().unwrap_or_default()
     );
     let _ = std::fs::write(path, text);
 }
@@ -488,11 +493,132 @@ fn restore(install: &AlvrInstall) -> (&'static str, Vec<String>) {
     )
 }
 
-fn add_pack_dialog(paths: &Paths) -> Option<PathBuf> {
+/// Turn a .csv/.json export into an .ini pack inside `paths.packs`.
+fn import_translation_file(paths: &Paths, file: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("read: {e}"))?;
+    let extension = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let id = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("custom")
+        .to_owned();
+
+    let pairs = match extension.as_str() {
+        "json" => pack::pairs_from_json(&text),
+        _ => pack::pairs_from_csv(&text),
+    };
+    if pairs.is_empty() {
+        return Err("import_empty".to_owned());
+    }
+    let content = pack::pack_from_pairs(&id, &id, &pairs);
+    let needs_font = pairs.iter().any(|(_, translation)| {
+        translation.chars().any(|c| {
+            let code = c as u32;
+            (0x0590..=0x05FF).contains(&code)   // Hebrew
+                || (0x0600..=0x06FF).contains(&code) // Arabic
+                || (0x0900..=0x0DFF).contains(&code) // Indic
+                || (0x0E00..=0x0E7F).contains(&code) // Thai
+                || (0x1000..=0x109F).contains(&code) // Myanmar
+        })
+    });
+    let font_missing = needs_font && !paths.packs.join(format!("{id}.ttf")).is_file();
+    let target = paths.packs.join(format!("{id}.ini"));
+    std::fs::create_dir_all(&paths.packs).map_err(|e| format!("mkdir: {e}"))?;
+    std::fs::write(&target, content).map_err(|e| format!("write: {e}"))?;
+    if font_missing {
+        return Ok(format!("{id}.ini|font"));
+    }
+    Ok(format!("{id}.ini"))
+}
+
+/// Write an English -> (empty) CSV that translators can fill in.
+fn export_template(paths: &Paths, target: &Path) -> Result<usize, String> {
+    let reference = paths.packs.join("zh-CN.ini");
+    let keys = pack::english_keys(&reference);
+    if keys.is_empty() {
+        return Err("reference pack missing".to_owned());
+    }
+    let mut csv = String::from("English,Translation\n");
+    for key in &keys {
+        let escaped = if key.contains(',') || key.contains('"') || key.contains('\n') {
+            format!("\"{}\"", key.replace('"', "\"\""))
+        } else {
+            key.clone()
+        };
+        csv.push_str(&escaped);
+        csv.push_str(",\n");
+    }
+    std::fs::write(target, csv).map_err(|e| format!("write: {e}"))?;
+    Ok(keys.len())
+}
+
+/// Minimal HTTPS GET via the curl.exe that ships with Windows 10+.
+fn http_get(url: &str) -> Option<String> {
+    let output = std::process::Command::new("curl")
+        .args(["-L", "--silent", "--max-time", "40", url])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Download every language pack of the project that is not here yet.
+fn fetch_language_packs(paths: &Paths) -> Result<Vec<String>, String> {
+    let listing = http_get(PACKS_INDEX).ok_or_else(|| "network".to_owned())?;
+    let items: serde_json::Value =
+        serde_json::from_str(&listing).map_err(|_| "network".to_owned())?;
+    let array = items.as_array().ok_or_else(|| "network".to_owned())?;
+
+    std::fs::create_dir_all(&paths.packs).map_err(|e| format!("mkdir: {e}"))?;
+    let mut downloaded = Vec::new();
+    for item in array {
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let lower = name.to_ascii_lowercase();
+        let is_pack = lower.ends_with(".ini") || lower.ends_with(".ttf");
+        if !is_pack || lower == "deny.txt" {
+            continue;
+        }
+        let target = paths.packs.join(name);
+        if target.is_file() {
+            continue;
+        }
+        let Some(url) = item.get("download_url").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if let Some(body) = http_get(url) {
+            let _ = std::fs::write(&target, body);
+            downloaded.push(name.to_owned());
+        }
+    }
+    Ok(downloaded)
+}
+
+fn add_pack_dialog(paths: &Paths, title: &str) -> Option<PathBuf> {
     let file = rfd::FileDialog::new()
-        .set_title("ALVR language pack")
-        .add_filter("ALVR language pack (*.ini)", &["ini"])
+        .set_title(title)
+        .add_filter(
+            "Language pack or translation",
+            &["ini", "csv", "json", "txt"],
+        )
         .pick_file()?;
+    let extension = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if extension != "ini" {
+        return import_translation_file(paths, &file)
+            .ok()
+            .map(|name| paths.packs.join(name));
+    }
     let name = file.file_name()?.to_owned();
     std::fs::create_dir_all(&paths.packs).ok()?;
     let target = paths.packs.join(&name);
@@ -540,8 +666,48 @@ fn run_cli(paths: &Paths) -> Option<()> {
     let do_apply = flag("--apply");
     let do_restore = flag("--restore");
     let do_backup = flag("--backup-settings");
-    if !do_apply && !do_restore && !do_backup {
+    let do_fetch = flag("--fetch-packs");
+    let do_template = value("--export-template");
+    let do_import = value("--import");
+    if !do_apply
+        && !do_restore
+        && !do_backup
+        && !do_fetch
+        && do_template.is_none()
+        && do_import.is_none()
+    {
         return None;
+    }
+
+    if let Some(target) = do_template {
+        let log_path = exe_dir().join("alvr-l10n.log");
+        let result = export_template(paths, Path::new(&target));
+        let text = match result {
+            Ok(count) => format!("OK: wrote {count} strings to {target}\n"),
+            Err(error) => format!("ERROR: {error}\n"),
+        };
+        let _ = std::fs::write(&log_path, text);
+        return Some(());
+    }
+    if let Some(source) = do_import {
+        let log_path = exe_dir().join("alvr-l10n.log");
+        let result = import_translation_file(paths, Path::new(&source));
+        let text = match result {
+            Ok(name) => format!("OK: {name}\n"),
+            Err(error) => format!("ERROR: {error}\n"),
+        };
+        let _ = std::fs::write(&log_path, text);
+        return Some(());
+    }
+    if do_fetch {
+        let log_path = exe_dir().join("alvr-l10n.log");
+        let text = match fetch_language_packs(paths) {
+            Ok(list) if list.is_empty() => "OK: nothing new\n".to_owned(),
+            Ok(list) => format!("OK: {}", list.join(", ")),
+            Err(error) => format!("ERROR: {error}\n"),
+        };
+        let _ = std::fs::write(&log_path, text);
+        return Some(());
     }
 
     let log_path = exe_dir().join("alvr-l10n.log");
@@ -626,6 +792,9 @@ enum Page {
 enum Action {
     None,
     Redetect,
+    BrowseExe,
+    FetchPacks,
+    ExportTemplate,
     Apply,
     Restore,
     Backup,
@@ -652,6 +821,7 @@ struct App {
     status_extra: String,
     toast: Option<(String, f64)>,
     window_styled: bool,
+    alvr_exe: Option<String>,
     paths: Paths,
 }
 
@@ -666,7 +836,12 @@ impl App {
         };
         let prefs = load_prefs(&paths.settings);
         theme::apply(&cc.egui_ctx, prefs.dark);
-        let install = alvr::detect();
+        let install = prefs
+            .alvr_exe
+            .as_ref()
+            .map(Path::new)
+            .and_then(alvr::detect_exe)
+            .or_else(alvr::detect);
         let packs = pack::load_dir(&paths.packs);
         let mut app = Self {
             install,
@@ -685,6 +860,7 @@ impl App {
             status_extra: String::new(),
             toast: None,
             window_styled: false,
+            alvr_exe: prefs.alvr_exe,
             paths,
         };
         app.sync_checked_with_alvr();
@@ -776,6 +952,7 @@ impl App {
             UiPrefs {
                 lang: self.ui_lang,
                 dark,
+                alvr_exe: self.alvr_exe.clone(),
             },
         );
     }
@@ -819,14 +996,105 @@ impl App {
                 self.toast(self.t("share_copied"));
             }
             Action::ToggleTheme => {}
+            Action::FetchPacks => {
+                self.status_key = "fetch_busy";
+                self.status_ok = true;
+                self.status_extra.clear();
+                match fetch_language_packs(&self.paths) {
+                    Ok(downloaded) if downloaded.is_empty() => {
+                        self.status_key = "fetch_none";
+                        self.status_ok = true;
+                        self.log = vec![self.t("fetch_none").to_owned()];
+                    }
+                    Ok(downloaded) => {
+                        self.packs = pack::load_dir(&self.paths.packs);
+                        self.sync_checked_with_alvr();
+                        self.status_key = "fetch_ok";
+                        self.status_ok = true;
+                        self.status_extra = downloaded.join(", ");
+                        self.log =
+                            vec![format!("{} {}", self.t("fetch_ok"), downloaded.join(", "))];
+                    }
+                    Err(_) => {
+                        self.status_key = "fetch_fail";
+                        self.status_ok = false;
+                        self.log = vec![self.t("fetch_fail").to_owned()];
+                    }
+                }
+            }
+            Action::ExportTemplate => {
+                if let Some(target) = rfd::FileDialog::new()
+                    .set_title(self.t("export_template"))
+                    .set_file_name("alvr-translation-template.csv")
+                    .add_filter("CSV", &["csv"])
+                    .save_file()
+                {
+                    match export_template(&self.paths, &target) {
+                        Ok(count) => {
+                            self.status_key = "template_saved";
+                            self.status_ok = true;
+                            self.status_extra = target.display().to_string();
+                            self.log = vec![format!(
+                                "{} {} ({} strings)",
+                                self.t("template_saved"),
+                                target.display(),
+                                count
+                            )];
+                        }
+                        Err(error) => {
+                            self.status_key = "template_fail";
+                            self.status_ok = false;
+                            self.log = vec![error];
+                        }
+                    }
+                }
+            }
+            Action::BrowseExe => {
+                let picked = rfd::FileDialog::new()
+                    .set_title("ALVR Dashboard.exe")
+                    .add_filter("ALVR Dashboard", &["exe"])
+                    .pick_file();
+                if let Some(file) = picked {
+                    match alvr::detect_exe(&file) {
+                        Some(found) => {
+                            self.install = Some(found);
+                            self.alvr_exe = Some(file.display().to_string());
+                            self.packs = pack::load_dir(&self.paths.packs);
+                            self.sync_checked_with_alvr();
+                            self.summarize();
+                            self.status_key = "exe_using";
+                            self.status_ok = true;
+                            self.status_extra = file.display().to_string();
+                            save_prefs(
+                                &self.paths.settings,
+                                UiPrefs {
+                                    lang: self.ui_lang,
+                                    dark: self.dark,
+                                    alvr_exe: self.alvr_exe.clone(),
+                                },
+                            );
+                        }
+                        None => {
+                            self.status_key = "exe_invalid";
+                            self.status_ok = false;
+                            self.status_extra.clear();
+                        }
+                    }
+                }
+            }
             Action::Redetect => {
-                self.install = alvr::detect();
+                self.install = self
+                    .alvr_exe
+                    .as_ref()
+                    .map(Path::new)
+                    .and_then(alvr::detect_exe)
+                    .or_else(alvr::detect);
                 self.packs = pack::load_dir(&self.paths.packs);
                 self.sync_checked_with_alvr();
                 self.summarize();
             }
             Action::AddPack => {
-                if let Some(path) = add_pack_dialog(&self.paths) {
+                if let Some(path) = add_pack_dialog(&self.paths, self.t("import_any_title")) {
                     let name = path
                         .file_name()
                         .unwrap_or_default()
@@ -834,7 +1102,12 @@ impl App {
                         .to_string();
                     self.packs = pack::load_dir(&self.paths.packs);
                     self.sync_checked_with_alvr();
+                    let needs_font = name.ends_with("|font");
+                    let name = name.trim_end_matches("|font").to_owned();
                     self.log = vec![format!("{} {}", self.t("pack_added"), name)];
+                    if needs_font {
+                        self.log.push(self.t("font_needed").to_owned());
+                    }
                     self.status_key = "status_ready";
                     self.status_ok = true;
                 } else {
@@ -969,7 +1242,16 @@ impl App {
             }
         }
 
-        ui.add_space(14.0);
+        ui.add_space(6.0);
+        if ui
+            .button(self.t("browse_exe"))
+            .on_hover_text(self.t("tip_browse_exe"))
+            .clicked()
+        {
+            *action = Action::BrowseExe;
+        }
+
+        ui.add_space(12.0);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.add_space(4.0);
             ui.label(self.t("packs"));
@@ -1011,6 +1293,12 @@ impl App {
                     .clicked()
                 {
                     *action = Action::OpenPackFolder;
+                }
+                if ui.button(self.t("fetch_packs")).clicked() {
+                    *action = Action::FetchPacks;
+                }
+                if ui.button(self.t("export_template")).clicked() {
+                    *action = Action::ExportTemplate;
                 }
             });
             ui.add_space(4.0);
@@ -1302,6 +1590,7 @@ impl eframe::App for App {
                             UiPrefs {
                                 lang: chosen,
                                 dark: self.dark,
+                                alvr_exe: self.alvr_exe.clone(),
                             },
                         );
                         self.summarize();
