@@ -1,5 +1,8 @@
 # ALVR-L10N
 
+![ALVR-L10N](docs/cover.png)
+
+
 ![build](https://github.com/AnShanZi-2018/ALVR-L10N/actions/workflows/build.yml/badge.svg)
 
 
