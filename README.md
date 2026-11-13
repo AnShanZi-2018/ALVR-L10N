@@ -124,6 +124,25 @@ ALVR-L10N.exe --import hi-IN.csv
 
 A language that uses a script ALVR's font cannot draw (Hindi, Thai, Arabic, Hebrew…) also needs a <id>.ttf next to its .ini; the tool detects this and warns you.
 
+## Quick setup (hardware based)
+
+The **Quick setup** page reads the machine and suggests ALVR settings that match it:
+
+* CPU name, RAM, GPUs **with VRAM**, free space on the ALVR drive, the headset ALVR remembers
+* a one-word connection switch (wired / wireless), because that changes the bitrate target
+* a recommendation: GPU tier, codec (H264 / HEVC), bitrate, per-eye resolution and refresh rate,
+  plus warnings for integrated graphics, low RAM or a full disk
+* **Apply to ALVR** writes those values into session.json after copying it to <ALVR>\\配置备份
+
+Only these keys are touched: 
+efresh_rate, eye_resolution_*, 	arget_eye_resolution_*,
+enable_foveated_encoding, controllers_enabled, preferred_codec, the constant bitrate and the
+transcoding width. Everything else in the file is preserved byte-for-byte in structure.
+
+`
+ALVR-L10N.exe --apply-recommendation [--wireless] [--path <ALVR dir>]
+`
+
 ## Translate with your own AI
 
 The **Translate** page lets a language be produced without anyone typing 651 strings by hand. Pick a service and a language from two dropdowns — the URL, model and pack id fill themselves in:

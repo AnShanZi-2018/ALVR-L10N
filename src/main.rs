@@ -18,7 +18,9 @@ mod alvr;
 mod lang;
 mod pack;
 mod patch;
+mod recommend;
 mod sfnt;
+mod sysinfo;
 mod theme;
 
 use alvr::AlvrInstall;
@@ -630,6 +632,68 @@ fn fetch_language_packs(paths: &Paths) -> Result<Vec<String>, String> {
     Ok(downloaded)
 }
 
+/// Best-effort headset name from the trusted clients in session.json.
+fn headset_from_session(install: &AlvrInstall) -> Option<String> {
+    let text = std::fs::read_to_string(session_file(install)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let clients = value.get("client_connections")?;
+    let map = clients.as_object()?;
+    for (_, client) in map {
+        if let Some(model) = client.get("device_name").and_then(|v| v.as_str()) {
+            return Some(model.to_owned());
+        }
+        if let Some(model) = client.get("model").and_then(|v| v.as_str()) {
+            return Some(model.to_owned());
+        }
+    }
+    None
+}
+
+/// Write the recommended values into session.json (backup first).
+fn apply_recommendation(
+    install: &AlvrInstall,
+    recommendation: &recommend::Recommendation,
+) -> Result<String, String> {
+    let path = session_file(install);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("read session.json: {e}"))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse session.json: {e}"))?;
+
+    let backup = backup_settings(install)?;
+
+    if let Some(config) = value.get_mut("openvr_config") {
+        config["refresh_rate"] = serde_json::json!(recommendation.refresh_hz);
+        config["eye_resolution_width"] = serde_json::json!(recommendation.eye_width);
+        config["eye_resolution_height"] = serde_json::json!(recommendation.eye_height);
+        config["target_eye_resolution_width"] = serde_json::json!(recommendation.eye_width);
+        config["target_eye_resolution_height"] = serde_json::json!(recommendation.eye_height);
+        config["enable_foveated_encoding"] = serde_json::json!(recommendation.foveated);
+        config["controllers_enabled"] = serde_json::json!(true);
+    }
+    if let Some(video) = value
+        .get_mut("session_settings")
+        .and_then(|settings| settings.get_mut("video"))
+    {
+        video["preferred_codec"] = serde_json::json!({ "variant": recommendation.codec });
+        if let Some(mode) = video
+            .get_mut("bitrate")
+            .and_then(|bitrate| bitrate.get_mut("mode"))
+        {
+            mode["ConstantMbps"] = serde_json::json!(recommendation.bitrate_mbps);
+        }
+        if let Some(resolution) = video
+            .get_mut("transcoding_view_resolution")
+            .and_then(|resolution| resolution.get_mut("Absolute"))
+        {
+            resolution["width"] = serde_json::json!(recommendation.eye_width);
+        }
+    }
+
+    let rendered = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+    std::fs::write(&path, rendered).map_err(|e| format!("write session.json: {e}"))?;
+    Ok(backup.display().to_string())
+}
+
 fn add_pack_dialog(paths: &Paths, title: &str) -> Option<PathBuf> {
     let file = rfd::FileDialog::new()
         .set_title(title)
@@ -704,6 +768,7 @@ fn run_cli(paths: &Paths) -> Option<()> {
         && !do_backup
         && !do_fetch
         && !do_ai
+        && !flag("--apply-recommendation")
         && do_template.is_none()
         && do_import.is_none()
     {
@@ -726,6 +791,36 @@ fn run_cli(paths: &Paths) -> Option<()> {
         let text = match result {
             Ok(name) => format!("OK: {name}\n"),
             Err(error) => format!("ERROR: {error}\n"),
+        };
+        let _ = std::fs::write(&log_path, text);
+        return Some(());
+    }
+    if flag("--apply-recommendation") {
+        let log_path = exe_dir().join("alvr-l10n.log");
+        let install = match value("--path") {
+            Some(path) => alvr::detect_in(Path::new(&path)),
+            None => alvr::detect(),
+        };
+        let text = match install {
+            Some(install) => {
+                let headset = headset_from_session(&install);
+                let hardware = sysinfo::probe(Some(&install.root), headset);
+                let wired = !flag("--wireless");
+                let recommendation = recommend::recommend(&hardware, wired);
+                match apply_recommendation(&install, &recommendation) {
+                    Ok(backup) => format!(
+                        "OK: {} / {} Mbps / {}x{} / {} Hz (backup: {})\n",
+                        recommendation.codec,
+                        recommendation.bitrate_mbps,
+                        recommendation.eye_width,
+                        recommendation.eye_height,
+                        recommendation.refresh_hz,
+                        backup
+                    ),
+                    Err(error) => format!("ERROR: {error}\n"),
+                }
+            }
+            None => "ERROR: ALVR not found\n".to_owned(),
         };
         let _ = std::fs::write(&log_path, text);
         return Some(());
@@ -862,6 +957,7 @@ const NAV_WIDTH: f32 = 180.0;
 #[derive(PartialEq, Clone, Copy)]
 enum Page {
     Localize,
+    Setup,
     Translate,
     Help,
     About,
@@ -875,6 +971,8 @@ enum Action {
     AiStart,
     AiStop,
     AiTest,
+    DetectHardware,
+    ApplySetup,
     FetchPacks,
     ExportTemplate,
     Apply,
@@ -919,6 +1017,8 @@ struct App {
     ai_provider: usize,
     ai_language_index: usize,
     ai_test_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    hardware: Option<sysinfo::Hardware>,
+    wired: bool,
     paths: Paths,
 }
 
@@ -947,6 +1047,7 @@ impl App {
             ui_lang: prefs.lang,
             page: match std::env::var("ALVR_L10N_PAGE").as_deref() {
                 Ok("about") => Page::About,
+                Ok("setup") => Page::Setup,
                 Ok("translate") => Page::Translate,
                 Ok("help") => Page::Help,
                 _ => Page::Localize,
@@ -974,6 +1075,8 @@ impl App {
             ai_provider: 0,
             ai_language_index: 0,
             ai_test_rx: None,
+            hardware: None,
+            wired: true,
             paths,
         };
         app.sync_checked_with_alvr();
@@ -1128,6 +1231,55 @@ impl App {
                 self.toast(self.t("share_copied"));
             }
             Action::ToggleTheme => {}
+            Action::DetectHardware => {
+                let headset = self
+                    .install
+                    .as_ref()
+                    .map(|install| headset_from_session(install))
+                    .unwrap_or_default();
+                let root = self.install.as_ref().map(|install| install.root.clone());
+                self.hardware = Some(sysinfo::probe(root.as_deref(), headset));
+                self.status_key = "status_ready";
+                self.status_ok = true;
+            }
+            Action::ApplySetup => {
+                let Some(hardware) = self.hardware.clone() else {
+                    self.status_key = "setup_apply_failed";
+                    self.status_ok = false;
+                    self.status_extra = "no hardware detected".to_owned();
+                    return;
+                };
+                let recommendation = recommend::recommend(&hardware, self.wired);
+                if let Some(install) = self.install.clone() {
+                    match apply_recommendation(&install, &recommendation) {
+                        Ok(backup) => {
+                            self.status_key = "setup_applied";
+                            self.status_ok = true;
+                            self.status_extra = String::new();
+                            self.log = vec![
+                                format!("{} ({})", self.t("setup_applied"), backup),
+                                format!(
+                                    "{}: {} / {} Mbps / {}x{} / {} Hz",
+                                    self.t("setup_result"),
+                                    recommendation.codec,
+                                    recommendation.bitrate_mbps,
+                                    recommendation.eye_width,
+                                    recommendation.eye_height,
+                                    recommendation.refresh_hz
+                                ),
+                            ];
+                        }
+                        Err(error) => {
+                            self.status_key = "setup_apply_failed";
+                            self.status_ok = false;
+                            self.status_extra = error;
+                        }
+                    }
+                } else {
+                    self.status_key = "status_no_alvr";
+                    self.status_ok = false;
+                }
+            }
             Action::AiTest => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 self.ai_test_rx = Some(rx);
@@ -1581,6 +1733,188 @@ impl App {
             });
     }
 
+    // ------------------------------------------------------------ page: setup
+
+    fn setup_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
+        if self.hardware.is_none() {
+            let headset = self.install.as_ref().and_then(headset_from_session);
+            let root = self.install.as_ref().map(|install| install.root.clone());
+            self.hardware = Some(sysinfo::probe(root.as_deref(), headset));
+        }
+
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.t("nav_setup"))
+                .size(20.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(self.t("setup_intro")).wrap());
+        ui.add_space(12.0);
+
+        let hardware = self.hardware.clone().unwrap_or_default();
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::Grid::new("hardware")
+                .num_columns(2)
+                .spacing([16.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(self.t("setup_cpu"));
+                    ui.label(&hardware.cpu);
+                    ui.end_row();
+
+                    ui.label(self.t("setup_ram"));
+                    ui.label(format!("{} GB", hardware.ram_gb));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_gpu"));
+                    let real_gpus: Vec<&sysinfo::Gpu> = hardware
+                        .gpus
+                        .iter()
+                        .filter(|gpu| {
+                            let lower = gpu.name.to_ascii_lowercase();
+                            !lower.contains("virtual")
+                                && !lower.contains("basic display")
+                                && !lower.contains("remote")
+                        })
+                        .collect();
+                    if real_gpus.is_empty() {
+                        ui.label("—");
+                    } else {
+                        ui.vertical(|ui| {
+                            for gpu in real_gpus {
+                                let text = if gpu.vram_mb > 0 {
+                                    format!("{} ({} GB)", gpu.name, gpu.vram_mb / 1024)
+                                } else {
+                                    gpu.name.clone()
+                                };
+                                ui.label(text);
+                            }
+                        });
+                    }
+                    ui.end_row();
+
+                    ui.label(self.t("setup_disk"));
+                    ui.label(format!("{} GB", hardware.disk_free_gb));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_headset"));
+                    ui.label(hardware.headset.clone().unwrap_or_else(|| "—".to_owned()));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_link"));
+                    let wired_label = self.t("setup_wired");
+                    let wireless_label = self.t("setup_wireless");
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut self.wired, true, wired_label);
+                        ui.radio_value(&mut self.wired, false, wireless_label);
+                    });
+                    ui.end_row();
+                });
+        });
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button(self.t("setup_redetect")).clicked() {
+                *action = Action::DetectHardware;
+            }
+        });
+
+        let recommendation = recommend::recommend(&hardware, self.wired);
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(self.t("setup_result"))
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(4.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::Grid::new("recommendation")
+                .num_columns(2)
+                .spacing([16.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(self.t("setup_tier"));
+                    ui.label(format!(
+                        "{} ({})",
+                        recommendation.tier,
+                        hardware
+                            .gpus
+                            .iter()
+                            .filter(|gpu| {
+                                let lower = gpu.name.to_ascii_lowercase();
+                                !lower.contains("virtual")
+                                    && !lower.contains("basic display")
+                                    && !lower.contains("remote")
+                            })
+                            .max_by_key(|gpu| gpu.vram_mb)
+                            .map(|gpu| gpu.name.clone())
+                            .unwrap_or_else(|| "—".to_owned())
+                    ));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_codec"));
+                    ui.label(recommendation.codec);
+                    ui.end_row();
+
+                    ui.label(self.t("setup_bitrate"));
+                    ui.label(format!("{} Mbps", recommendation.bitrate_mbps));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_resolution"));
+                    ui.label(format!(
+                        "{} x {}",
+                        recommendation.eye_width, recommendation.eye_height
+                    ));
+                    ui.end_row();
+
+                    ui.label(self.t("setup_refresh"));
+                    ui.label(format!("{} Hz", recommendation.refresh_hz));
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(self.t("setup_bitrate_note"))
+                        .small()
+                        .weak(),
+                )
+                .wrap(),
+            );
+        });
+
+        ui.add_space(10.0);
+        if ui
+            .add_sized(
+                [200.0, 34.0],
+                egui::Button::new(egui::RichText::new(self.t("setup_apply")).size(15.0)),
+            )
+            .clicked()
+        {
+            *action = Action::ApplySetup;
+        }
+
+        ui.add_space(8.0);
+        let color = if self.status_ok {
+            egui::Color32::from_rgb(110, 200, 130)
+        } else {
+            egui::Color32::from_rgb(225, 95, 95)
+        };
+        let mut status = self.t(self.status_key).to_owned();
+        if !self.status_extra.is_empty() {
+            status.push_str(": ");
+            status.push_str(&self.status_extra);
+        }
+        ui.add(egui::Label::new(egui::RichText::new(status).color(color)).wrap());
+
+        ui.add_space(6.0);
+        for note in &recommendation.notes {
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(
+                egui::RichText::new(note).color(egui::Color32::from_rgb(220, 170, 90)),
+            ));
+        }
+    }
+
     // -------------------------------------------------------- page: translate
 
     fn translate_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
@@ -2016,6 +2350,7 @@ impl eframe::App for App {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
                         Page::Localize => self.home_ui(ui, &mut action),
+                        Page::Setup => self.setup_ui(ui, &mut action),
                         Page::Translate => self.translate_ui(ui, &mut action),
                         Page::Help => self.help_ui(ui),
                         Page::About => self.about_ui(ui, &mut action),
