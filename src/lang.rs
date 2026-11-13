@@ -161,4 +161,12 @@ const ROWS: &[(&str, [&str; 5])] = &[
     ("ai_progress", ["Progress", "进度", "進度", "進捗", "진행률"]),
     ("ai_ready", ["Fill in the fields and press translate.", "填好上面的信息，然后点翻译。", "填好上面的資訊，然後按翻譯。", "上を入力して翻訳を押してください。", "위 항목을 입력하고 번역을 누르세요."]),
     ("ai_saved_pack", ["Language pack written:", "已生成语言包：", "已產生語言包：", "言語パックを作成しました：", "언어 팩 생성됨:"]),
+    ("ai_provider", ["Service", "服务商", "服務商", "サービス", "서비스"]),
+    ("ai_test", ["Test connection", "测试连接", "測試連線", "接続テスト", "연결 테스트"]),
+    ("ai_testing", ["Testing…", "正在测试…", "正在測試…", "テスト中…", "테스트 중…"]),
+    ("ai_test_ok", ["Connection works. Reply:", "连接成功，返回：", "連線成功，回傳：", "接続成功。応答:", "연결 성공. 응답:"]),
+    ("ai_test_fail", ["Connection failed:", "连接失败：", "連線失敗：", "接続失敗:", "연결 실패:"]),
+    ("ai_key_hint", ["Get a key here", "在这里申请密钥", "在這裡申請密鑰", "キーはこちら", "여기서 키 발급"]),
+    ("ai_language_pick", ["Pick a language", "选择语言", "選擇語言", "言語を選択", "언어 선택"]),
+    ("ai_auto_fill", ["Everything is filled in from these two dropdowns — no typing needed.", "服务商和语言选好就行，其余自动填。", "服務商和語言選好就行，其餘自動填。", "サービスと言語を選ぶだけで自動入力されます。", "서비스와 언어만 고르면 나머지는 자동으로 채워집니다."]),
 ];

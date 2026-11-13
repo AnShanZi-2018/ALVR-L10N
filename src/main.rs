@@ -874,6 +874,7 @@ enum Action {
     BrowseExe,
     AiStart,
     AiStop,
+    AiTest,
     FetchPacks,
     ExportTemplate,
     Apply,
@@ -915,6 +916,9 @@ struct App {
     ai_total: usize,
     ai_translated: usize,
     ai_status: String,
+    ai_provider: usize,
+    ai_language_index: usize,
+    ai_test_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     paths: Paths,
 }
 
@@ -967,6 +971,9 @@ impl App {
             ai_total: 0,
             ai_translated: 0,
             ai_status: String::new(),
+            ai_provider: 0,
+            ai_language_index: 0,
+            ai_test_rx: None,
             paths,
         };
         app.sync_checked_with_alvr();
@@ -1121,6 +1128,20 @@ impl App {
                 self.toast(self.t("share_copied"));
             }
             Action::ToggleTheme => {}
+            Action::AiTest => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.ai_test_rx = Some(rx);
+                self.ai_status = self.t("ai_testing").to_owned();
+                let config = ai::AiConfig {
+                    base_url: self.ai_base.clone(),
+                    model: self.ai_model.clone(),
+                    api_key: self.ai_key.clone(),
+                };
+                std::thread::spawn(move || {
+                    let result = ai::test_connection(&config);
+                    let _ = tx.send(result);
+                });
+            }
             Action::AiStop => {
                 self.ai_cancel
                     .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1574,20 +1595,68 @@ impl App {
         ui.add(egui::Label::new(self.t("ai_intro")).wrap());
         ui.add_space(12.0);
 
+        let mut provider_changed = false;
+        let mut language_changed = false;
+        let mut open_key_page: Option<&'static str> = None;
+
         egui::Frame::group(ui.style()).show(ui, |ui| {
             egui::Grid::new("ai_fields")
                 .num_columns(2)
-                .spacing([12.0, 8.0])
+                .spacing([12.0, 10.0])
                 .show(ui, |ui| {
-                    ui.label(self.t("ai_base"));
-                    ui.add_sized([320.0, 22.0], egui::TextEdit::singleline(&mut self.ai_base));
+                    ui.label(self.t("ai_provider"));
+                    ui.horizontal(|ui| {
+                        let current = ai::PROVIDERS
+                            .get(self.ai_provider)
+                            .map(|p| p.name)
+                            .unwrap_or("Custom");
+                        let mut choice = self.ai_provider;
+                        egui::ComboBox::from_id_salt("ai_provider")
+                            .width(200.0)
+                            .selected_text(current)
+                            .show_ui(ui, |ui| {
+                                for (index, provider) in ai::PROVIDERS.iter().enumerate() {
+                                    ui.selectable_value(&mut choice, index, provider.name);
+                                }
+                            });
+                        if choice != self.ai_provider {
+                            self.ai_provider = choice;
+                            provider_changed = true;
+                        }
+                        if let Some(provider) = ai::PROVIDERS.get(self.ai_provider) {
+                            if !provider.key_url.is_empty()
+                                && ui.small_button(self.t("ai_key_hint")).clicked()
+                            {
+                                open_key_page = Some(provider.key_url);
+                            }
+                        }
+                    });
                     ui.end_row();
 
                     ui.label(self.t("ai_model"));
-                    ui.add_sized(
-                        [320.0, 22.0],
-                        egui::TextEdit::singleline(&mut self.ai_model),
-                    );
+                    let models = ai::PROVIDERS
+                        .get(self.ai_provider)
+                        .map(|p| p.models)
+                        .unwrap_or(&[]);
+                    if models.is_empty() {
+                        ui.add_sized(
+                            [320.0, 22.0],
+                            egui::TextEdit::singleline(&mut self.ai_model),
+                        );
+                    } else {
+                        let mut choice = self.ai_model.clone();
+                        egui::ComboBox::from_id_salt("ai_model")
+                            .width(320.0)
+                            .selected_text(choice.clone())
+                            .show_ui(ui, |ui| {
+                                for model in models {
+                                    ui.selectable_value(&mut choice, (*model).to_owned(), *model);
+                                }
+                            });
+                        if choice != self.ai_model {
+                            self.ai_model = choice;
+                        }
+                    }
                     ui.end_row();
 
                     ui.label(self.t("ai_key"));
@@ -1598,27 +1667,70 @@ impl App {
                     ui.end_row();
 
                     ui.label(self.t("ai_language"));
-                    ui.add_sized(
-                        [320.0, 22.0],
-                        egui::TextEdit::singleline(&mut self.ai_language),
-                    );
+                    let current_language = self.ai_language.clone();
+                    let mut choice = current_language.clone();
+                    egui::ComboBox::from_id_salt("ai_language")
+                        .width(320.0)
+                        .selected_text(choice.clone())
+                        .show_ui(ui, |ui| {
+                            for (name, _id) in ai::LANGUAGES {
+                                ui.selectable_value(&mut choice, (*name).to_owned(), *name);
+                            }
+                        });
+                    if choice != current_language {
+                        self.ai_language = choice;
+                        language_changed = true;
+                    }
                     ui.end_row();
 
                     ui.label(self.t("ai_pack_id"));
                     ui.add_sized(
-                        [320.0, 22.0],
+                        [140.0, 22.0],
                         egui::TextEdit::singleline(&mut self.ai_pack_id).hint_text("hi-IN"),
                     );
                     ui.end_row();
                 });
+
             ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(egui::RichText::new(self.t("ai_auto_fill")).small().weak()).wrap(),
+            );
             let remember_label = self.t("ai_remember");
             ui.checkbox(&mut self.ai_remember_key, remember_label);
         });
 
-        ui.add_space(10.0);
+        if provider_changed {
+            if let Some(provider) = ai::PROVIDERS.get(self.ai_provider) {
+                self.ai_base = provider.base.to_owned();
+                if let Some(model) = provider.models.first() {
+                    self.ai_model = (*model).to_owned();
+                }
+            }
+        }
+        if language_changed {
+            if let Some((_name, id)) = ai::LANGUAGES
+                .iter()
+                .find(|(name, _)| *name == self.ai_language)
+            {
+                self.ai_pack_id = (*id).to_owned();
+            }
+        }
+        if let Some(url) = open_key_page {
+            *action = Action::OpenUrl(url);
+        }
+
+        ui.add_space(12.0);
         ui.horizontal(|ui| {
             let running = self.ai_rx.is_some();
+            if ui
+                .add_enabled(
+                    !running,
+                    egui::Button::new(egui::RichText::new(self.t("ai_test")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::AiTest;
+            }
             if ui
                 .add_enabled(
                     !running,
@@ -1654,7 +1766,7 @@ impl App {
         ui.add_space(6.0);
         ui.add(
             egui::Label::new(
-                egui::RichText::new("The key is only sent to the endpoint you enter above.")
+                egui::RichText::new("The key is only sent to the endpoint above.")
                     .small()
                     .weak(),
             )
@@ -1909,6 +2021,27 @@ impl eframe::App for App {
                         Page::About => self.about_ui(ui, &mut action),
                     });
             });
+
+        if self.ai_test_rx.is_some() {
+            let mut outcome = None;
+            if let Some(rx) = self.ai_test_rx.take() {
+                match rx.try_recv() {
+                    Ok(result) => outcome = Some(result),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        self.ai_test_rx = Some(rx);
+                    }
+                    Err(_) => outcome = Some(Err("test thread died".to_owned())),
+                }
+            }
+            if let Some(result) = outcome {
+                self.ai_status = match result {
+                    Ok(reply) => format!("{} {}", self.t("ai_test_ok"), reply),
+                    Err(error) => format!("{} {}", self.t("ai_test_fail"), error),
+                };
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(300));
+            }
+        }
 
         if self.ai_rx.is_some() {
             let mut finished: Option<Vec<(String, String)>> = None;

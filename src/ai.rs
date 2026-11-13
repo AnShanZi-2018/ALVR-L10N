@@ -202,3 +202,100 @@ pub fn translate_all(
         result: Some(out),
     });
 }
+
+/// Well-known OpenAI-compatible endpoints.
+pub struct Provider {
+    pub name: &'static str,
+    pub base: &'static str,
+    pub models: &'static [&'static str],
+    pub key_url: &'static str,
+}
+
+pub const PROVIDERS: &[Provider] = &[
+    Provider {
+        name: "OpenAI",
+        base: "https://api.openai.com/v1",
+        models: &["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+        key_url: "https://platform.openai.com/api-keys",
+    },
+    Provider {
+        name: "DeepSeek",
+        base: "https://api.deepseek.com/v1",
+        models: &["deepseek-chat"],
+        key_url: "https://platform.deepseek.com/api_keys",
+    },
+    Provider {
+        name: "Moonshot",
+        base: "https://api.moonshot.cn/v1",
+        models: &["moonshot-v1-8k"],
+        key_url: "https://platform.moonshot.cn/console/api-keys",
+    },
+    Provider {
+        name: "智谱 GLM",
+        base: "https://open.bigmodel.cn/api/paas/v4",
+        models: &["glm-4-flash", "glm-4-air"],
+        key_url: "https://open.bigmodel.cn/usercenter/apikeys",
+    },
+    Provider {
+        name: "SiliconFlow",
+        base: "https://api.siliconflow.cn/v1",
+        models: &["Qwen/Qwen2.5-7B-Instruct", "THUDM/glm-4-9b-chat"],
+        key_url: "https://cloud.siliconflow.cn/account/ak",
+    },
+    Provider {
+        name: "Ollama (local)",
+        base: "http://127.0.0.1:11434/v1",
+        models: &["qwen2.5:7b", "llama3.1:8b"],
+        key_url: "",
+    },
+    Provider {
+        name: "Custom",
+        base: "",
+        models: &[],
+        key_url: "",
+    },
+];
+
+/// Languages offered in the dropdown: (native name, pack id).
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("简体中文", "zh-CN"),
+    ("繁體中文", "zh-TW"),
+    ("English", "en"),
+    ("日本語", "ja-JP"),
+    ("한국어", "ko-KR"),
+    ("Русский", "ru-RU"),
+    ("Français", "fr-FR"),
+    ("Deutsch", "de-DE"),
+    ("Español", "es-ES"),
+    ("Português (Brasil)", "pt-BR"),
+    ("Italiano", "it-IT"),
+    ("Polski", "pl-PL"),
+    ("Türkçe", "tr-TR"),
+    ("Українська", "uk-UA"),
+    ("हिन्दी", "hi-IN"),
+    ("বাংলা", "bn-BD"),
+    ("العربية", "ar-SA"),
+    ("فارسی", "fa-IR"),
+    ("ไทย", "th-TH"),
+    ("Tiếng Việt", "vi-VN"),
+    ("Bahasa Indonesia", "id-ID"),
+    ("Nederlands", "nl-NL"),
+    ("Svenska", "sv-SE"),
+    ("Čeština", "cs-CZ"),
+    ("Magyar", "hu-HU"),
+    ("Română", "ro-RO"),
+    ("Ελληνικά", "el-GR"),
+    ("עברית", "he-IL"),
+    ("Монгол", "mn-MN"),
+];
+
+/// Translate a single string; used by the connection test.
+pub fn test_connection(config: &AiConfig) -> Result<String, String> {
+    let batch = vec![("Hello".to_owned(), String::new())];
+    translate_once(config, "Test", &batch).map(|pairs| {
+        pairs
+            .first()
+            .map(|(_, value)| value.clone())
+            .unwrap_or_default()
+    })
+}

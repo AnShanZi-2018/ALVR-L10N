@@ -126,7 +126,7 @@ A language that uses a script ALVR's font cannot draw (Hindi, Thai, Arabic, Hebr
 
 ## Translate with your own AI
 
-The **Translate** page lets a language be produced without anyone typing 651 strings by hand:
+The **Translate** page lets a language be produced without anyone typing 651 strings by hand. Pick a service and a language from two dropdowns — the URL, model and pack id fill themselves in:
 
 * point it at any **OpenAI-compatible** endpoint (https://api.openai.com/v1, DeepSeek, Moonshot,
   a local Ollama/LM Studio server, …), fill in the model and your key;
