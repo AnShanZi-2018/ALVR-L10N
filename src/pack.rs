@@ -269,3 +269,30 @@ pub fn pairs_from_json(text: &str) -> Vec<(String, String)> {
         _ => Vec::new(),
     }
 }
+
+/// Read `[strings]` of an existing pack as (english, translation) pairs.
+pub fn read_strings(path: &std::path::Path) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(path) {
+        let mut in_strings = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
+                continue;
+            }
+            if let Some(name) = line
+                .strip_prefix('[')
+                .and_then(|rest| rest.split(']').next())
+            {
+                in_strings = name.trim().eq_ignore_ascii_case("strings");
+                continue;
+            }
+            if in_strings {
+                if let Some((key, value)) = line.split_once('=') {
+                    pairs.push((unescape(key.trim()), unescape(value.trim())));
+                }
+            }
+        }
+    }
+    pairs
+}

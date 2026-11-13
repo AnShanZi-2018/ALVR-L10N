@@ -13,6 +13,7 @@
 //! Command line: `--apply`, `--restore`, `--backup-settings`, `--lang <id>`,
 //! `--no-build`, `--path <alvr dir>`. Results go to `alvr-l10n.log`.
 
+mod ai;
 mod alvr;
 mod lang;
 mod pack;
@@ -66,6 +67,12 @@ struct UiPrefs {
     lang: UiLang,
     dark: bool,
     alvr_exe: Option<String>,
+    ai_base: String,
+    ai_model: String,
+    ai_key: String,
+    ai_language: String,
+    ai_pack_id: String,
+    ai_remember_key: bool,
 }
 
 fn read_ini(path: &Path) -> Vec<(String, String)> {
@@ -101,6 +108,16 @@ fn load_prefs(path: &Path) -> UiPrefs {
             .map(|value| !value.eq_ignore_ascii_case("light"))
             .unwrap_or(true),
         alvr_exe: lookup("alvr_exe").filter(|value| !value.is_empty()),
+        ai_base: lookup("ai_base")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_owned()),
+        ai_model: lookup("ai_model")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "gpt-4o-mini".to_owned()),
+        ai_key: lookup("ai_key").unwrap_or_default(),
+        ai_language: lookup("ai_language").unwrap_or_else(|| "English".to_owned()),
+        ai_pack_id: lookup("ai_pack_id").unwrap_or_default(),
+        ai_remember_key: lookup("ai_remember").map(|v| v == "1").unwrap_or(false),
     }
 }
 
@@ -109,10 +126,22 @@ fn save_prefs(path: &Path, prefs: UiPrefs) {
         "; ALVR-L10N 工具设置 / tool settings\r\n\
          ; language: en / zh-CN / zh-TW / ja-JP / ko-KR\r\n\
          ; theme: dark / light\r\n\
-         \r\n[ui]\r\nlanguage = {}\r\ntheme = {}\r\nalvr_exe = {}\r\n",
+         \r\n[ui]\r\nlanguage = {}\r\ntheme = {}\r\nalvr_exe = {}\r\n\
+         ai_base = {}\r\nai_model = {}\r\nai_language = {}\r\nai_pack_id = {}\r\n\
+         ai_remember = {}\r\nai_key = {}\r\n",
         prefs.lang.id(),
         if prefs.dark { "dark" } else { "light" },
-        prefs.alvr_exe.clone().unwrap_or_default()
+        prefs.alvr_exe.clone().unwrap_or_default(),
+        prefs.ai_base,
+        prefs.ai_model,
+        prefs.ai_language,
+        prefs.ai_pack_id,
+        if prefs.ai_remember_key { "1" } else { "0" },
+        if prefs.ai_remember_key {
+            prefs.ai_key
+        } else {
+            String::new()
+        }
     );
     let _ = std::fs::write(path, text);
 }
@@ -669,10 +698,12 @@ fn run_cli(paths: &Paths) -> Option<()> {
     let do_fetch = flag("--fetch-packs");
     let do_template = value("--export-template");
     let do_import = value("--import");
+    let do_ai = value("--ai-translate").is_some();
     if !do_apply
         && !do_restore
         && !do_backup
         && !do_fetch
+        && !do_ai
         && do_template.is_none()
         && do_import.is_none()
     {
@@ -697,6 +728,53 @@ fn run_cli(paths: &Paths) -> Option<()> {
             Err(error) => format!("ERROR: {error}\n"),
         };
         let _ = std::fs::write(&log_path, text);
+        return Some(());
+    }
+    if let Some(language) = value("--ai-translate") {
+        let base = value("--ai-base").unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+        let model = value("--ai-model").unwrap_or_else(|| "gpt-4o-mini".to_owned());
+        let key = value("--ai-key").unwrap_or_default();
+        let pack_id = value("--ai-pack").unwrap_or_else(|| "custom".to_owned());
+        let reference = paths.packs.join("zh-CN.ini");
+        let keys = pack::english_keys(&reference);
+        let target = paths.packs.join(format!("{pack_id}.ini"));
+        let existing = pack::read_strings(&target);
+        let known: std::collections::HashSet<String> =
+            existing.iter().map(|(k, _)| k.clone()).collect();
+        let missing: Vec<(String, String)> = keys
+            .into_iter()
+            .filter(|key| !known.contains(key))
+            .map(|key| (key, String::new()))
+            .collect();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let config = ai::AiConfig {
+            base_url: base,
+            model,
+            api_key: key,
+        };
+        let total = missing.len();
+        ai::translate_all(config, language.clone(), missing, cancel, tx);
+
+        let mut result = Vec::new();
+        while let Ok(progress) = rx.try_recv() {
+            if let Some(pairs) = progress.result {
+                result = pairs;
+            }
+        }
+        let mut merged = existing;
+        for (english, translation) in result {
+            merged.push((english, translation));
+        }
+        let content = pack::pack_from_pairs(&pack_id, &language, &merged);
+        let log_path = exe_dir().join("alvr-l10n.log");
+        let text = match std::fs::write(&target, content) {
+            Ok(_) => format!("OK: {} strings -> {}\n", merged.len(), target.display()),
+            Err(error) => format!("ERROR: {error}\n"),
+        };
+        let _ = std::fs::write(&log_path, text);
+        let _ = total;
         return Some(());
     }
     if do_fetch {
@@ -784,6 +862,7 @@ const NAV_WIDTH: f32 = 180.0;
 #[derive(PartialEq, Clone, Copy)]
 enum Page {
     Localize,
+    Translate,
     Help,
     About,
 }
@@ -793,6 +872,8 @@ enum Action {
     None,
     Redetect,
     BrowseExe,
+    AiStart,
+    AiStop,
     FetchPacks,
     ExportTemplate,
     Apply,
@@ -822,6 +903,18 @@ struct App {
     toast: Option<(String, f64)>,
     window_styled: bool,
     alvr_exe: Option<String>,
+    ai_base: String,
+    ai_model: String,
+    ai_key: String,
+    ai_language: String,
+    ai_pack_id: String,
+    ai_remember_key: bool,
+    ai_rx: Option<std::sync::mpsc::Receiver<ai::Progress>>,
+    ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ai_done: usize,
+    ai_total: usize,
+    ai_translated: usize,
+    ai_status: String,
     paths: Paths,
 }
 
@@ -850,6 +943,7 @@ impl App {
             ui_lang: prefs.lang,
             page: match std::env::var("ALVR_L10N_PAGE").as_deref() {
                 Ok("about") => Page::About,
+                Ok("translate") => Page::Translate,
                 Ok("help") => Page::Help,
                 _ => Page::Localize,
             },
@@ -861,6 +955,18 @@ impl App {
             toast: None,
             window_styled: false,
             alvr_exe: prefs.alvr_exe,
+            ai_base: prefs.ai_base,
+            ai_model: prefs.ai_model,
+            ai_key: prefs.ai_key,
+            ai_language: prefs.ai_language,
+            ai_pack_id: prefs.ai_pack_id,
+            ai_remember_key: prefs.ai_remember_key,
+            ai_rx: None,
+            ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ai_done: 0,
+            ai_total: 0,
+            ai_translated: 0,
+            ai_status: String::new(),
             paths,
         };
         app.sync_checked_with_alvr();
@@ -953,8 +1059,27 @@ impl App {
                 lang: self.ui_lang,
                 dark,
                 alvr_exe: self.alvr_exe.clone(),
+                ..self.ai_prefs()
             },
         );
+    }
+
+    fn ai_prefs(&self) -> UiPrefs {
+        UiPrefs {
+            lang: self.ui_lang,
+            dark: self.dark,
+            alvr_exe: self.alvr_exe.clone(),
+            ai_base: self.ai_base.clone(),
+            ai_model: self.ai_model.clone(),
+            ai_key: self.ai_key.clone(),
+            ai_language: self.ai_language.clone(),
+            ai_pack_id: self.ai_pack_id.clone(),
+            ai_remember_key: self.ai_remember_key,
+        }
+    }
+
+    fn save_ai_prefs(&self) {
+        save_prefs(&self.paths.settings, self.ai_prefs());
     }
 
     fn perform(&mut self, ctx: &egui::Context, action: Action) {
@@ -996,6 +1121,61 @@ impl App {
                 self.toast(self.t("share_copied"));
             }
             Action::ToggleTheme => {}
+            Action::AiStop => {
+                self.ai_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                self.ai_status = "stopping…".to_owned();
+            }
+            Action::AiStart => {
+                if self.ai_pack_id.trim().is_empty()
+                    || self.ai_language.trim().is_empty()
+                    || self.ai_base.trim().is_empty()
+                    || self.ai_model.trim().is_empty()
+                {
+                    self.ai_status = "pack id / language / URL / model required".to_owned();
+                } else {
+                    let reference = self.paths.packs.join("zh-CN.ini");
+                    let keys = pack::english_keys(&reference);
+                    let target = self
+                        .paths
+                        .packs
+                        .join(format!("{}.ini", self.ai_pack_id.trim()));
+                    let existing = pack::read_strings(&target);
+                    let known: std::collections::HashSet<String> =
+                        existing.iter().map(|(k, _)| k.clone()).collect();
+                    let missing: Vec<(String, String)> = keys
+                        .into_iter()
+                        .filter(|key| !known.contains(key))
+                        .map(|key| (key, String::new()))
+                        .collect();
+
+                    if missing.is_empty() {
+                        self.ai_status = "nothing left to translate".to_owned();
+                    } else {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.ai_cancel =
+                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        self.ai_rx = Some(rx);
+                        self.ai_total = missing.len();
+                        self.ai_done = 0;
+                        self.ai_translated = 0;
+                        self.ai_status = format!("translating {} strings…", missing.len());
+
+                        let config = ai::AiConfig {
+                            base_url: self.ai_base.clone(),
+                            model: self.ai_model.clone(),
+                            api_key: self.ai_key.clone(),
+                        };
+                        let language = self.ai_language.clone();
+                        let cancel = self.ai_cancel.clone();
+                        let sender = tx.clone();
+                        std::thread::spawn(move || {
+                            ai::translate_all(config, language, missing, cancel, sender);
+                        });
+                        self.save_ai_prefs();
+                    }
+                }
+            }
             Action::FetchPacks => {
                 self.status_key = "fetch_busy";
                 self.status_ok = true;
@@ -1071,6 +1251,7 @@ impl App {
                                     lang: self.ui_lang,
                                     dark: self.dark,
                                     alvr_exe: self.alvr_exe.clone(),
+                                    ..self.ai_prefs()
                                 },
                             );
                         }
@@ -1379,6 +1560,108 @@ impl App {
             });
     }
 
+    // -------------------------------------------------------- page: translate
+
+    fn translate_ui(&mut self, ui: &mut egui::Ui, action: &mut Action) {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.t("nav_translate"))
+                .size(20.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(self.t("ai_intro")).wrap());
+        ui.add_space(12.0);
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::Grid::new("ai_fields")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(self.t("ai_base"));
+                    ui.add_sized([320.0, 22.0], egui::TextEdit::singleline(&mut self.ai_base));
+                    ui.end_row();
+
+                    ui.label(self.t("ai_model"));
+                    ui.add_sized(
+                        [320.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.ai_model),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.t("ai_key"));
+                    ui.add_sized(
+                        [320.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.ai_key).password(true),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.t("ai_language"));
+                    ui.add_sized(
+                        [320.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.ai_language),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.t("ai_pack_id"));
+                    ui.add_sized(
+                        [320.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.ai_pack_id).hint_text("hi-IN"),
+                    );
+                    ui.end_row();
+                });
+            ui.add_space(4.0);
+            let remember_label = self.t("ai_remember");
+            ui.checkbox(&mut self.ai_remember_key, remember_label);
+        });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let running = self.ai_rx.is_some();
+            if ui
+                .add_enabled(
+                    !running,
+                    egui::Button::new(egui::RichText::new(self.t("ai_start")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::AiStart;
+            }
+            if ui
+                .add_enabled(
+                    running,
+                    egui::Button::new(egui::RichText::new(self.t("ai_stop")).size(15.0)),
+                )
+                .clicked()
+            {
+                *action = Action::AiStop;
+            }
+        });
+
+        ui.add_space(10.0);
+        let total = self.ai_total.max(1) as f32;
+        let fraction = (self.ai_done as f32 / total).clamp(0.0, 1.0);
+        ui.add(
+            egui::ProgressBar::new(fraction).text(format!("{} / {}", self.ai_done, self.ai_total)),
+        );
+        ui.add_space(6.0);
+        if self.ai_status.is_empty() {
+            ui.label(self.t("ai_ready"));
+        } else {
+            ui.add(egui::Label::new(self.ai_status.clone()).wrap());
+        }
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new("The key is only sent to the endpoint you enter above.")
+                    .small()
+                    .weak(),
+            )
+            .wrap(),
+        );
+    }
+
     // ------------------------------------------------------------- page: help
 
     fn help_ui(&mut self, ui: &mut egui::Ui) {
@@ -1553,6 +1836,14 @@ impl eframe::App for App {
                 ) {
                     self.page = Page::Localize;
                 }
+                if nav_row(
+                    ui,
+                    "文",
+                    self.t("nav_translate"),
+                    self.page == Page::Translate,
+                ) {
+                    self.page = Page::Translate;
+                }
                 if nav_row(ui, "?", self.t("nav_help"), self.page == Page::Help) {
                     self.page = Page::Help;
                 }
@@ -1592,6 +1883,7 @@ impl eframe::App for App {
                                 lang: chosen,
                                 dark: self.dark,
                                 alvr_exe: self.alvr_exe.clone(),
+                                ..self.ai_prefs()
                             },
                         );
                         self.summarize();
@@ -1612,10 +1904,60 @@ impl eframe::App for App {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
                         Page::Localize => self.home_ui(ui, &mut action),
+                        Page::Translate => self.translate_ui(ui, &mut action),
                         Page::Help => self.help_ui(ui),
                         Page::About => self.about_ui(ui, &mut action),
                     });
             });
+
+        if self.ai_rx.is_some() {
+            let mut finished: Option<Vec<(String, String)>> = None;
+            if let Some(rx) = self.ai_rx.take() {
+                while let Ok(progress) = rx.try_recv() {
+                    self.ai_done = progress.done;
+                    self.ai_total = progress.total;
+                    self.ai_translated = progress.translated;
+                    if !progress.message.is_empty() {
+                        self.ai_status = progress.message.clone();
+                    }
+                    finished = progress.result.clone();
+                    if finished.is_none() {
+                        self.ai_rx = Some(rx);
+                        break;
+                    }
+                    break;
+                }
+            }
+            if let Some(result) = finished {
+                let target = self
+                    .paths
+                    .packs
+                    .join(format!("{}.ini", self.ai_pack_id.trim()));
+                let mut merged = pack::read_strings(&target);
+                let known: std::collections::HashSet<String> =
+                    merged.iter().map(|(k, _)| k.clone()).collect();
+                for (english, translation) in result {
+                    if !known.contains(&english) {
+                        merged.push((english, translation));
+                    }
+                }
+                let content =
+                    pack::pack_from_pairs(self.ai_pack_id.trim(), self.ai_language.trim(), &merged);
+                if std::fs::write(&target, content).is_ok() {
+                    self.ai_status = format!(
+                        "{} {} ({} strings)",
+                        self.t("ai_saved_pack"),
+                        target.display(),
+                        merged.len()
+                    );
+                    self.packs = pack::load_dir(&self.paths.packs);
+                    self.sync_checked_with_alvr();
+                } else {
+                    self.ai_status = "could not write the pack".to_owned();
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(300));
+        }
 
         if action == Action::ToggleTheme {
             let dark = !self.dark;

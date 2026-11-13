@@ -124,6 +124,25 @@ ALVR-L10N.exe --import hi-IN.csv
 
 A language that uses a script ALVR's font cannot draw (Hindi, Thai, Arabic, Hebrew…) also needs a <id>.ttf next to its .ini; the tool detects this and warns you.
 
+## Translate with your own AI
+
+The **Translate** page lets a language be produced without anyone typing 651 strings by hand:
+
+* point it at any **OpenAI-compatible** endpoint (https://api.openai.com/v1, DeepSeek, Moonshot,
+  a local Ollama/LM Studio server, …), fill in the model and your key;
+* pick the target language and a pack id (for example hi-IN);
+* press **Translate missing strings** — the tool sends the untranslated strings in batches of 25,
+  parses the JSON reply and writes languages/<id>.ini;
+* progress is shown while it runs, and it can be stopped at any time (finished batches are kept).
+
+The key is used only for the requests to the endpoint you entered; it is kept in memory unless you
+tick “remember the key”, which stores it in 	ool.ini as plain text.
+
+`
+ALVR-L10N.exe --ai-translate Hindi --ai-base https://api.openai.com/v1 \
+               --ai-model gpt-4o-mini --ai-key sk-... --ai-pack hi-IN
+`
+
 ## Language pack format
 
 `languages/<id>.ini`:
