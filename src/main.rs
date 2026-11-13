@@ -1395,6 +1395,7 @@ impl App {
 
         for (title, body) in [
             ("help_lang_title", "help_lang_body"),
+            ("help_custom_title", "help_custom_body"),
             ("help_pack_title", "help_pack_body"),
             ("help_font_title", "help_font_body"),
             ("help_where_title", "help_where_body"),
@@ -1667,10 +1668,22 @@ fn nav_row(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool) -> bool {
     } else {
         visuals.text_color()
     };
+    // icon gets a fixed slot so every label starts at the same x
+    let icon_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(8.0, 0.0),
+        egui::vec2(28.0, height),
+    );
     ui.painter().text(
-        rect.left_center() + egui::vec2(12.0, 0.0),
+        icon_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::proportional(15.0),
+        color,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 44.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        format!("{icon}   {label}"),
+        label,
         egui::FontId::proportional(15.0),
         color,
     );
