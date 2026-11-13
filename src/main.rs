@@ -2282,6 +2282,9 @@ impl eframe::App for App {
                 ) {
                     self.page = Page::Localize;
                 }
+                if nav_row(ui, "⚙", self.t("nav_setup"), self.page == Page::Setup) {
+                    self.page = Page::Setup;
+                }
                 if nav_row(
                     ui,
                     "文",
