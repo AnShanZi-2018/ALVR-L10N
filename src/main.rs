@@ -618,6 +618,7 @@ const NAV_WIDTH: f32 = 180.0;
 #[derive(PartialEq, Clone, Copy)]
 enum Page {
     Localize,
+    Help,
     About,
 }
 
@@ -634,6 +635,7 @@ enum Action {
     OpenPackFolder,
     ToggleTheme,
     Share,
+    Feedback,
     OpenUrl(&'static str),
 }
 
@@ -673,6 +675,7 @@ impl App {
             ui_lang: prefs.lang,
             page: match std::env::var("ALVR_L10N_PAGE").as_deref() {
                 Ok("about") => Page::About,
+                Ok("help") => Page::Help,
                 _ => Page::Localize,
             },
             dark: prefs.dark,
@@ -777,9 +780,25 @@ impl App {
         );
     }
 
-    fn perform(&mut self, action: Action) {
+    fn perform(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::None => {}
+            Action::Feedback => {
+                ctx.copy_text(self.t("about_email").to_owned());
+                let _ = std::process::Command::new("cmd")
+                    .args([
+                        "/c",
+                        "start",
+                        "",
+                        "mailto:anshanzi2018@gmail.com?subject=ALVR-L10N%20feedback",
+                    ])
+                    .spawn();
+                self.toast(format!(
+                    "{} {}",
+                    self.t("feedback_copied"),
+                    self.t("about_email")
+                ));
+            }
             Action::OpenUrl(url) => {
                 let _ = std::process::Command::new("cmd")
                     .args(["/c", "start", "", url])
@@ -979,10 +998,18 @@ impl App {
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button(self.t("add_pack")).clicked() {
+                if ui
+                    .button(self.t("add_pack"))
+                    .on_hover_text(self.t("tip_add_pack"))
+                    .clicked()
+                {
                     *action = Action::AddPack;
                 }
-                if ui.button(self.t("open_pack_folder")).clicked() {
+                if ui
+                    .button(self.t("open_pack_folder"))
+                    .on_hover_text(self.t("tip_open_pack_folder"))
+                    .clicked()
+                {
                     *action = Action::OpenPackFolder;
                 }
             });
@@ -1048,7 +1075,11 @@ impl App {
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(self.t("log_title")).strong());
+        ui.label(
+            egui::RichText::new(self.t("log_title"))
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -1058,6 +1089,37 @@ impl App {
                     ui.add(egui::Label::new(line).wrap());
                 }
             });
+    }
+
+    // ------------------------------------------------------------- page: help
+
+    fn help_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.t("nav_help"))
+                .size(20.0)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        ui.add_space(8.0);
+        ui.add(egui::Label::new(self.t("help_intro")).wrap());
+        ui.add_space(12.0);
+
+        for (title, body) in [
+            ("help_lang_title", "help_lang_body"),
+            ("help_pack_title", "help_pack_body"),
+            ("help_font_title", "help_font_body"),
+            ("help_where_title", "help_where_body"),
+            ("help_safety_title", "help_safety_body"),
+        ] {
+            ui.label(
+                egui::RichText::new(self.t(title))
+                    .strong()
+                    .color(ui.visuals().text_color()),
+            );
+            ui.add(egui::Label::new(self.t(body)).wrap());
+            ui.add_space(10.0);
+        }
     }
 
     // ------------------------------------------------------------ page: about
@@ -1086,13 +1148,16 @@ impl App {
         ui.add_space(16.0);
 
         link_row(ui, "🌐", self.t("about_github"), PROJECT_URL, action);
-        link_row(
-            ui,
-            "✉",
-            self.t("about_feedback"),
-            "mailto:anshanzi2018@gmail.com",
-            action,
-        );
+        let clicked = ui
+            .button(egui::RichText::new(format!(
+                "✉   {}",
+                self.t("about_feedback")
+            )))
+            .on_hover_text(self.t("about_email"))
+            .clicked();
+        if clicked {
+            *action = Action::Feedback;
+        }
         let clicked = ui
             .button(egui::RichText::new(format!(
                 "📋  {}",
@@ -1104,7 +1169,11 @@ impl App {
         }
 
         ui.add_space(16.0);
-        ui.label(egui::RichText::new(self.t("about_license")).strong());
+        ui.label(
+            egui::RichText::new(self.t("about_license"))
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
         ui.add_space(4.0);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             egui::ScrollArea::vertical()
@@ -1156,7 +1225,10 @@ impl eframe::App for App {
         }
 
         // eframe follows the system theme; keep our own choice pinned.
-        if ctx.style().visuals.panel_fill != theme::expected_panel(self.dark) {
+        let current = &ctx.style().visuals;
+        if current.panel_fill != theme::expected_panel(self.dark)
+            || current.override_text_color != Some(theme::expected_text(self.dark))
+        {
             theme::apply(ctx, self.dark);
         }
 
@@ -1191,6 +1263,9 @@ impl eframe::App for App {
                     self.page == Page::Localize,
                 ) {
                     self.page = Page::Localize;
+                }
+                if nav_row(ui, "?", self.t("nav_help"), self.page == Page::Help) {
+                    self.page = Page::Help;
                 }
                 if nav_row(ui, "ℹ", self.t("nav_about"), self.page == Page::About) {
                     self.page = Page::About;
@@ -1247,6 +1322,7 @@ impl eframe::App for App {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
                         Page::Localize => self.home_ui(ui, &mut action),
+                        Page::Help => self.help_ui(ui),
                         Page::About => self.about_ui(ui, &mut action),
                     });
             });
@@ -1255,7 +1331,7 @@ impl eframe::App for App {
             let dark = !self.dark;
             self.set_theme(ctx, dark);
         } else {
-            self.perform(action);
+            self.perform(ctx, action);
         }
 
         // toast

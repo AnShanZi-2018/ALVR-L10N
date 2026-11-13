@@ -102,6 +102,12 @@ The official executable is patched in place:
 
 The version is read from the executable's version resource, so `builds/v20.14.1` and `builds/20.14.1` both match.
 
+## In-app help
+
+The tool has a **Help** page that explains: where the language packs come from, how to add one
+(or drop a .ini into the pack folder), which font files are needed for CJK/Thai/Arabic,
+what gets copied into ALVR and where the backups live.
+
 ## Language pack format
 
 `languages/<id>.ini`:

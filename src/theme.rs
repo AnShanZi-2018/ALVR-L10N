@@ -13,8 +13,17 @@ const BG_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xf4, 0xf4, 0xf6);
 const PANEL_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const WIDGET_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xe8, 0xe8, 0xec);
 const WIDGET_HOVER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xda, 0xda, 0xe0);
+const LIGHT_TEXT: egui::Color32 = egui::Color32::from_rgb(0x1c, 0x1c, 0x1e);
 
 /// Panel colour the current theme should produce (used to detect overrides).
+pub fn expected_text(dark: bool) -> egui::Color32 {
+    if dark {
+        TEXT_DARK
+    } else {
+        LIGHT_TEXT
+    }
+}
+
 pub fn expected_panel(dark: bool) -> egui::Color32 {
     if dark {
         BG_DARK
