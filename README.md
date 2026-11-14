@@ -39,8 +39,8 @@ Grab the latest `ALVR-L10N-win64.zip` from the releases page and unpack it anywh
 | ja-JP | 日本語 | complete |
 | ko-KR | 한국어 | complete |
 | 
-u-RU | Русский | partial (falls back to English) |
-| r-FR | Français | partial (falls back to English) |
+| ru-RU | Русский | partial (falls back to English) |
+| fr-FR | Français | partial (falls back to English) |
 
 Untranslated entries show the English text, so a partial pack is always safe to
 select. Adding strings is a plain text edit — see [Language pack format](#language-pack-format).
@@ -48,7 +48,7 @@ select. Adding strings is a plain text edit — see [Language pack format](#lang
 ## Interface
 
 * Left navigation like ALVR itself, with **Localize** and **About** pages
-* ALVR-style rounded buttons, dark and light themes (toggle at the bottom left, remembered in 	ool.ini)
+* ALVR-style rounded buttons, dark and light themes (toggle at the bottom left, remembered in `tool.ini`)
 * Native rounded window corners and dark title bar on Windows 11
 * About page: project link, feedback e-mail, "share this tool" (copies the repository link) and the full license
 
@@ -95,6 +95,24 @@ The official executable is patched in place:
 * English string literals are replaced by translations, **space-padded** so the file length never changes. Only entries whose UTF-8 length fits the original are used, which is why short labels often stay English.
 * The embedded `Ubuntu Light` font (used by ALVR's UI) is replaced by a CJK subset that fits into the same slot, so Chinese/Japanese/Korean glyphs render.
 * Anything that looks like an enum value or an internal identifier is skipped (`looks_like_ui_text` + `deny.txt`).
+
+### Limitations of compatibility mode
+
+These are inherent to patching a binary in place, not bugs to be fixed:
+
+* **Coverage is partial.** On v20.14.1 only 51 of 651 strings fit and were replaced.
+  Short labels (`Audio`, `Save`, `Trust`) can never hold two CJK characters, so they stay English.
+* **Replacement must not change the file length.** Translations are space-padded to the original
+  byte count; anything longer is skipped rather than truncated.
+* **A patched official binary can look like malware.** A program that searches for byte sequences
+  inside another `.exe` and rewrites them is textbook antivirus behaviour. If your AV quarantines
+  the result, use the full-build mode instead — it replaces the executable with a rebuilt one and
+  never modifies an official binary.
+* **Every ALVR release needs new work.** A new upstream version means rebuilding the localized
+  binaries and re-mapping the strings; `builds/` grows linearly with the number of supported versions.
+
+The full-build mode has none of these problems; compatibility mode exists so that an ALVR release
+without a bundled build is not a dead end.
 
 **Supported layouts**
 
