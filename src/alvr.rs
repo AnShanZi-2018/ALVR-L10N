@@ -205,14 +205,18 @@ fn dashboard_in(root: &Path) -> Option<(PathBuf, String)> {
     None
 }
 
-
 /// Copy an installation into `dest` so it can be localized without touching
 /// the original folder. Backups, logs and symbols are skipped.
 pub fn clone_to(src: &AlvrInstall, dest: &Path) -> Result<AlvrInstall, String> {
     const SKIP_DIRS: &[&str] = &[".alvr-l10n", "配置备份", "languages"];
     const SKIP_EXT: &[&str] = &["pdb", "lnk"];
 
-    fn copy_tree(from: &Path, to: &Path, skip_dirs: &[&str], skip_ext: &[&str]) -> std::io::Result<()> {
+    fn copy_tree(
+        from: &Path,
+        to: &Path,
+        skip_dirs: &[&str],
+        skip_ext: &[&str],
+    ) -> std::io::Result<()> {
         std::fs::create_dir_all(to)?;
         for entry in std::fs::read_dir(from)? {
             let entry = entry?;
@@ -243,14 +247,11 @@ pub fn clone_to(src: &AlvrInstall, dest: &Path) -> Result<AlvrInstall, String> {
     copy_tree(&src.root, dest, SKIP_DIRS, SKIP_EXT)
         .map_err(|e| format!("copy {} -> {}: {e}", src.root.display(), dest.display()))?;
 
-    let dashboard = dest.join(
-        src.dashboard
-            .file_name()
-            .unwrap_or_default(),
-    );
-    let launcher = src.launcher.as_ref().map(|path| {
-        dest.join(path.file_name().unwrap_or_default())
-    });
+    let dashboard = dest.join(src.dashboard.file_name().unwrap_or_default());
+    let launcher = src
+        .launcher
+        .as_ref()
+        .map(|path| dest.join(path.file_name().unwrap_or_default()));
 
     if !dashboard.is_file() {
         return Err("copied folder has no dashboard executable".to_owned());
@@ -266,11 +267,21 @@ pub fn clone_to(src: &AlvrInstall, dest: &Path) -> Result<AlvrInstall, String> {
 
 /// `<parent>/ALVR-L10N-<version>` next to the source install.
 pub fn clone_destination(src: &AlvrInstall) -> PathBuf {
-    let parent = src.root.parent().map(Path::to_path_buf).unwrap_or_else(|| src.root.clone());
+    let parent = src
+        .root
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| src.root.clone());
     let version: String = src
         .version
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     parent.join(format!("ALVR-L10N-{version}"))
 }
