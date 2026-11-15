@@ -205,6 +205,76 @@ fn dashboard_in(root: &Path) -> Option<(PathBuf, String)> {
     None
 }
 
+
+/// Copy an installation into `dest` so it can be localized without touching
+/// the original folder. Backups, logs and symbols are skipped.
+pub fn clone_to(src: &AlvrInstall, dest: &Path) -> Result<AlvrInstall, String> {
+    const SKIP_DIRS: &[&str] = &[".alvr-l10n", "配置备份", "languages"];
+    const SKIP_EXT: &[&str] = &["pdb", "lnk"];
+
+    fn copy_tree(from: &Path, to: &Path, skip_dirs: &[&str], skip_ext: &[&str]) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let target = to.join(&name);
+
+            if path.is_dir() {
+                if skip_dirs.iter().any(|skip| name.eq_ignore_ascii_case(skip)) {
+                    continue;
+                }
+                copy_tree(&path, &target, skip_dirs, skip_ext)?;
+                continue;
+            }
+
+            let ext = path
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if skip_ext.contains(&ext.as_str()) {
+                continue;
+            }
+            std::fs::copy(&path, &target)?;
+        }
+        Ok(())
+    }
+
+    copy_tree(&src.root, dest, SKIP_DIRS, SKIP_EXT)
+        .map_err(|e| format!("copy {} -> {}: {e}", src.root.display(), dest.display()))?;
+
+    let dashboard = dest.join(
+        src.dashboard
+            .file_name()
+            .unwrap_or_default(),
+    );
+    let launcher = src.launcher.as_ref().map(|path| {
+        dest.join(path.file_name().unwrap_or_default())
+    });
+
+    if !dashboard.is_file() {
+        return Err("copied folder has no dashboard executable".to_owned());
+    }
+
+    Ok(AlvrInstall {
+        root: dest.to_path_buf(),
+        version: src.version.clone(),
+        dashboard,
+        launcher,
+    })
+}
+
+/// `<parent>/ALVR-L10N-<version>` next to the source install.
+pub fn clone_destination(src: &AlvrInstall) -> PathBuf {
+    let parent = src.root.parent().map(Path::to_path_buf).unwrap_or_else(|| src.root.clone());
+    let version: String = src
+        .version
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' { c } else { '-' })
+        .collect();
+    parent.join(format!("ALVR-L10N-{version}"))
+}
+
 pub fn detect_in(root: &Path) -> Option<AlvrInstall> {
     let (dashboard, version) = dashboard_in(root)?;
     let launcher = find_named(root, is_launcher, "launcher").or_else(|| {
