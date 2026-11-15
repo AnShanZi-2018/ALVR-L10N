@@ -382,7 +382,30 @@ fn apply(
     default_pack: Option<&str>,
     paths: &Paths,
     options: &patch::PatchOptions,
+    allow_in_place: bool,
 ) -> (&'static str, Vec<String>) {
+    // Without a build matched to this ALVR version the only way to localize is
+    // patching the executable. Do that on a copy by default so the original
+    // installation stays untouched.
+    let mut working = install.clone();
+    let mut cloned_to: Option<PathBuf> = None;
+    if build_dir_for(paths, &install.version).is_none() && !allow_in_place {
+        let dest = alvr::clone_destination(install);
+        match alvr::clone_to(install, &dest) {
+            Ok(copy) => {
+                cloned_to = Some(dest.clone());
+                working = copy;
+            }
+            Err(error) => {
+                return (
+                    "status_no_alvr",
+                    vec![format!("could not copy the installation: {error}")],
+                )
+            }
+        }
+    }
+    let install = &working;
+
     let snapshot = snapshot_session(install);
     let mut log = Vec::new();
 
@@ -468,6 +491,12 @@ fn apply(
 
     if let Some(message) = ensure_session_intact(&snapshot) {
         log.push(message);
+    }
+    if let Some(dest) = cloned_to {
+        log.push(format!(
+            "the original installation was not modified; run ALVR from {}",
+            dest.display()
+        ));
     }
     (status, log)
 }
@@ -939,6 +968,7 @@ fn run_cli(paths: &Paths) -> Option<()> {
                 wanted.first().map(String::as_str),
                 paths,
                 &options,
+                flag("--in-place"),
             )
         }
     };
@@ -1558,7 +1588,15 @@ impl App {
                         ..patch::PatchOptions::all()
                     };
                     let (status, log) =
-                        apply(&install, &self.packs, &chosen, None, &self.paths, &options);
+                        apply(
+                            &install,
+                            &self.packs,
+                            &chosen,
+                            None,
+                            &self.paths,
+                            &options,
+                            false,
+                        );
                     self.status_key = status;
                     self.status_ok = status != "status_no_alvr";
                     self.log = log;
