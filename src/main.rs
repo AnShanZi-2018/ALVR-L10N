@@ -1587,16 +1587,15 @@ impl App {
                         deny: load_deny(&self.paths),
                         ..patch::PatchOptions::all()
                     };
-                    let (status, log) =
-                        apply(
-                            &install,
-                            &self.packs,
-                            &chosen,
-                            None,
-                            &self.paths,
-                            &options,
-                            false,
-                        );
+                    let (status, log) = apply(
+                        &install,
+                        &self.packs,
+                        &chosen,
+                        None,
+                        &self.paths,
+                        &options,
+                        false,
+                    );
                     self.status_key = status;
                     self.status_ok = status != "status_no_alvr";
                     self.log = log;
